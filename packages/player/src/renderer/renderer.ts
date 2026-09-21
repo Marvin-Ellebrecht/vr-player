@@ -203,7 +203,22 @@ export abstract class Renderer {
     protected readonly flipLayout: boolean,
     protected readonly format: Format,
   ) {
-    this.regl = reglInit({ pixelRatio: 1, canvas: this.canvas });
+    const pixelRatio = 1;
+
+this.canvas.width = Math.floor(  this.canvas.clientWidth * pixelRatio,);
+this.canvas.height = Math.floor(  this.canvas.clientHeight * pixelRatio,);
+const renderHeight = 1080;
+
+const aspectRatio =  this.canvas.clientWidth / this.canvas.clientHeight;
+
+this.canvas.width = Math.round(renderHeight * aspectRatio);
+this.canvas.height = renderHeight;
+
+this.regl = reglInit({
+  canvas: this.canvas,
+  pixelRatio: 1,
+});
+
 
     this.cmdRender = this.regl({
       vert: VERT_SHADER,
