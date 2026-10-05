@@ -264,22 +264,48 @@ export function App() {
       void viewerRef.current?.requestFullscreen();
     });
   };
+  
+  const closeVideoHandle = () => {
+  const video = videoRef.current;
 
-  const closeViewer = async () => {
-    if (document.fullscreenElement) {
-      try {
-        await document.exitFullscreen();
-      } catch (error) {
-        console.error('Exit fullscreen error:', error);
-      }
+  if (!video) {
+    return;
+  }
+
+  // Stop playback immediately.
+  video.pause();
+
+  // Release the currently loaded media resource.
+  video.removeAttribute('src');
+  video.load();
+
+  // A drag/drop video gets its own object URL which is no longer needed.
+  if (currentObjectUrlRef.current) {
+    URL.revokeObjectURL(currentObjectUrlRef.current);
+    currentObjectUrlRef.current = null;
+  }
+
+  // Reset video state.
+  setReady(false);
+  setPlaying(false);
+  setCurrentTime(0);
+  setDuration(0);
+};
+
+
+const closeViewer = async () => {
+  if (document.fullscreenElement) {
+    try {
+      await document.exitFullscreen();
+    } catch (error) {
+      console.error('Exit fullscreen error:', error);
     }
+  }
 
-    if (videoRef.current) {
-      videoRef.current.pause();
-    }
+  closeVideoHandle();
 
-    setDebug(false);
-  };
+  setDebug(false);
+};
 
   /*
    * ---------------------------------------------------------
