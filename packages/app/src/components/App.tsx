@@ -61,18 +61,21 @@ export function App() {
 
   const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
   const [galleryUrls, setGalleryUrls] = useState<Record<string, string>>({});
-  const [galleryThumbnails, setGalleryThumbnails] = useState< Record<string, string> >({});
+  const [galleryThumbnails, setGalleryThumbnails] = useState<Record<string, string>>({});
   const [urlInput, setUrlInput] = useState('');
+  type VideoSource = 'file' | 'url' | 'gallery' | null;
+  const [videoSource, setVideoSource] =  useState<VideoSource>(null);
 
 
   /*
    * ---------------------------------------------------------
-   * VIDEO LADEN
+   * LOAD VIDEO
    * ---------------------------------------------------------
    */
 
   const loadVideo = (url: string) => {
     const video = videoRef.current;
+	
 
     if (!video) {
       console.warn('Video element not available yet');
@@ -89,51 +92,51 @@ export function App() {
     setDuration(0);
 
     /*
-     * Alte Quelle komplett entfernen.
+     * Completely remove the old source.
      */
     video.removeAttribute('src');
     video.load();
 
     /*
-     * Neue Quelle setzen.
+     * Set the new source.
      */
     video.src = url;
     video.load();
 
     /*
-     * Wichtig:
-     * React-State ebenfalls aktualisieren.
+     * Important:
+     * Update the React state as well.
      */
     setVideoUrl(url);
   };
 
   /*
    * ---------------------------------------------------------
-   * DATEI PER DRAG & DROP
+   * FILE VIA DRAG & DROP
    * ---------------------------------------------------------
    */
 
-  const handleVideoFile = (selectedFile: File) => {
-    console.log('Selected file:', selectedFile);
+const handleVideoFile = (selectedFile: File) => {
+  console.log('Selected file:', selectedFile);
 
-    if (!selectedFile.type.startsWith('video/')) {
-      toast.error('Please select a video file.');
-      return;
-    }
+  if (!selectedFile.type.startsWith('video/')) {
+    toast.error('Please select a video file.');
+    return;
+  }
 
-    /*
-     * Alte Object URL freigeben.
-     */
-    if (currentObjectUrlRef.current) {
-      URL.revokeObjectURL(currentObjectUrlRef.current);
-    }
+  if (currentObjectUrlRef.current) {
+    URL.revokeObjectURL(currentObjectUrlRef.current);
+  }
 
-    const objectUrl = URL.createObjectURL(selectedFile);
+  const objectUrl = URL.createObjectURL(selectedFile);
 
-    currentObjectUrlRef.current = objectUrl;
+  currentObjectUrlRef.current = objectUrl;
 
-    loadVideo(objectUrl);
-  };
+  setVideoSource('file');
+
+  loadVideo(objectUrl);
+};
+
 
   /*
    * ---------------------------------------------------------
@@ -196,7 +199,7 @@ export function App() {
 
   /*
    * ---------------------------------------------------------
-   * GALERIE VIDEO AUSWÄHLEN
+   * SELECT VIDEO FROM GALLERY
    * ---------------------------------------------------------
    */
 
@@ -213,7 +216,8 @@ export function App() {
 
     console.log('Selecting gallery video:', file.name);
 
-    loadVideo(url);
+	  setVideoSource('gallery');
+	  loadVideo(url);
 
     if (openDebug) {
       flushSync(() => {
@@ -266,32 +270,31 @@ export function App() {
   };
   
   const closeVideoHandle = () => {
-  const video = videoRef.current;
+    const video = videoRef.current;
 
-  if (!video) {
-    return;
-  }
+    if (!video) {
+      return;
+    }
 
-  // Stop playback immediately.
-  video.pause();
+    // Stop playback immediately.
+    video.pause();
 
-  // Release the currently loaded media resource.
-  video.removeAttribute('src');
-  video.load();
+    // Release the currently loaded media resource.
+    video.removeAttribute('src');
+    video.load();
 
-  // A drag/drop video gets its own object URL which is no longer needed.
-  if (currentObjectUrlRef.current) {
-    URL.revokeObjectURL(currentObjectUrlRef.current);
-    currentObjectUrlRef.current = null;
-  }
+    // A drag/drop video gets its own object URL which is no longer needed.
+    if (currentObjectUrlRef.current) {
+      URL.revokeObjectURL(currentObjectUrlRef.current);
+      currentObjectUrlRef.current = null;
+    }
 
-  // Reset video state.
-  setReady(false);
-  setPlaying(false);
-  setCurrentTime(0);
-  setDuration(0);
-};
-
+    // Reset video state.
+    setReady(false);
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  };
 
 const closeViewer = async () => {
   if (document.fullscreenElement) {
@@ -302,14 +305,73 @@ const closeViewer = async () => {
     }
   }
 
-  closeVideoHandle();
+  if (videoSource === 'gallery') {
+    closeVideoHandle();
 
+    setVideoSource(null);
+
+    // Stay on the gallery page.
+    setDebug(false);
+
+    return;
+  }
+
+  // File and URL videos stay loaded.
   setDebug(false);
 };
 
+
+  const handleSelectFile = () => {
+    // Stop and unload the main video.
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
+    }
+
+    // Stop and unload all gallery preview videos.
+    document
+      .querySelectorAll<HTMLVideoElement>('[data-gallery-video]')
+      .forEach((video) => {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      });
+
+    // Release all gallery object URLs.
+    Object.values(galleryUrls).forEach((url) => {
+      URL.revokeObjectURL(url);
+    });
+
+    // Release the currently loaded file URL.
+    if (currentObjectUrlRef.current) {
+      URL.revokeObjectURL(currentObjectUrlRef.current);
+      currentObjectUrlRef.current = null;
+    }
+
+    // Reset gallery and player state.
+    setGalleryFiles([]);
+    setGalleryUrls({});
+    setGalleryThumbnails({});
+    setDebug(false);
+    setReady(false);
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setVideoUrl('');
+
+    // Give React one frame to close/reset the gallery,
+    // then open the native file picker.
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLInputElement>('#file-input')
+        ?.click();
+    });
+  };
+
   /*
    * ---------------------------------------------------------
-   * VIDEO ORDNER LADEN
+   * LOAD VIDEO FOLDER
    * ---------------------------------------------------------
    */
 
@@ -339,14 +401,14 @@ const closeViewer = async () => {
       console.log('Gallery files:', files);
 
       /*
-       * Alte Galerie URLs freigeben.
+       * Release the old gallery URLs.
        */
       Object.values(galleryUrls).forEach((url) => {
         URL.revokeObjectURL(url);
       });
 
       /*
-       * Neue URLs erstellen.
+       * Create new URLs.
        */
       const urls: Record<string, string> = {};
 
@@ -358,7 +420,7 @@ const closeViewer = async () => {
       setGalleryUrls(urls);
 
       /*
-       * Thumbnails erzeugen.
+       * Generate thumbnails.
        */
       const thumbnails: Record<string, string> = {};
 
@@ -377,10 +439,10 @@ const closeViewer = async () => {
       setGalleryThumbnails(thumbnails);
 
       /*
-       * Erstes Video direkt laden.
+       * Load the first video immediately.
        *
-       * Das kannst du entfernen, wenn beim Ordner auswählen
-       * NICHT automatisch das erste Video geladen werden soll.
+       * You can remove this if selecting a folder
+       * should NOT automatically load the first video.
        */
       if (files.length > 0) {
         const firstUrl = urls[files[0].name];
@@ -432,7 +494,7 @@ const closeViewer = async () => {
 
   /*
    * ---------------------------------------------------------
-   * ZEIT FORMATIEREN
+   * FORMAT TIME
    * ---------------------------------------------------------
    */
 
@@ -587,7 +649,7 @@ const closeViewer = async () => {
 
   /*
    * ---------------------------------------------------------
-   * URL INPUT LEEREN
+   * CLEAR URL INPUT
    * ---------------------------------------------------------
    */
 
@@ -648,7 +710,7 @@ const closeViewer = async () => {
             layout={layout}
             flipLayout={flipLayout}
             format={format}
-			autoPlay={autoPlay}
+            autoPlay={autoPlay}
           />
         )}
 
@@ -669,6 +731,7 @@ const closeViewer = async () => {
       <div className="mr-10">
         <UI
           fileInputProps={getInputProps()}
+          onSelectFile={handleSelectFile}
           onSelectFolder={() => {
             chooseVideoFolder();
           }}
@@ -676,7 +739,7 @@ const closeViewer = async () => {
       </div>
 
       {/* -------------------------------------------------- */}
-      {/* GALERIE */}
+      {/* GALLERY */}
       {/* -------------------------------------------------- */}
 
       {galleryFiles.length > 0 && (
@@ -703,7 +766,7 @@ const closeViewer = async () => {
                   video.muted = true;
 
                   void video.play().catch(() => {
-                    // Browser kann Autoplay blockieren.
+                    // Browser can block playback.
                   });
                 }
               }}
@@ -721,6 +784,7 @@ const closeViewer = async () => {
             >
               {galleryUrls[file.name] ? (
                 <video
+                  data-gallery-video
                   src={galleryUrls[file.name]}
                   poster={
                     galleryThumbnails[file.name]
@@ -748,7 +812,7 @@ const closeViewer = async () => {
       )}
 
       {/* -------------------------------------------------- */}
-      {/* HAUPTVIDEO */}
+      {/* MAIN VIDEO */}
       {/* -------------------------------------------------- */}
 
       <div className="flex-1 overflow-auto py-4">
@@ -797,45 +861,44 @@ const closeViewer = async () => {
             console.log('Video can play');
             setReady(true);
           }}
-		  
-			onError={(event) => {
-			  const video = event.currentTarget;
-			  const error = video.error;
+          onError={(event) => {
+            const video = event.currentTarget;
+            const error = video.error;
 
-			  console.error('VIDEO ERROR', {
-				src: video.currentSrc || video.src,
-				code: error?.code,
-				message: error?.message,
-				networkState: video.networkState,
-				readyState: video.readyState,
-			  });
+            console.error('VIDEO ERROR', {
+              src: video.currentSrc || video.src,
+              code: error?.code,
+              message: error?.message,
+              networkState: video.networkState,
+              readyState: video.readyState,
+            });
 
-			  setReady(false);
+            setReady(false);
 
-			  let message = 'Video could not be loaded.';
+            let message = 'Video could not be loaded.';
 
-			  switch (error?.code) {
-				case MediaError.MEDIA_ERR_ABORTED:
-				  message = 'Video loading was aborted.';
-				  break;
+            switch (error?.code) {
+              case MediaError.MEDIA_ERR_ABORTED:
+                message = 'Video loading was aborted.';
+                break;
 
-				case MediaError.MEDIA_ERR_NETWORK:
-				  message = 'Could not download the video.';
-				  break;
+              case MediaError.MEDIA_ERR_NETWORK:
+                message = 'Could not download the video.';
+                break;
 
-				case MediaError.MEDIA_ERR_DECODE:
-				  message =
-					'Downloaded the video but cannot decode its format/codec.';
-				  break;
+              case MediaError.MEDIA_ERR_DECODE:
+                message =
+                  'Downloaded the video but cannot decode its format/codec.';
+                break;
 
-				case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-				  message =
-					'Does not support this video URL or codec.';
-				  break;
-			  }
+              case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                message =
+                  'Does not support this video URL or codec.';
+                break;
+            }
 
-			  toast.error(message);
-			}}
+            toast.error(message);
+          }}
           onTimeUpdate={(event) => {
             setCurrentTime(
               event.currentTarget.currentTime,
@@ -854,7 +917,7 @@ const closeViewer = async () => {
         />
 
         {/* ------------------------------------------------ */}
-        {/* STARTSCREEN */}
+        {/* START SCREEN */}
         {/* ------------------------------------------------ */}
 
         {!ready && (
@@ -887,56 +950,55 @@ const closeViewer = async () => {
 
               <div>
                 <form
-				  onSubmit={(event) => {
-					event.preventDefault();
+                  onSubmit={(event) => {
+                    event.preventDefault();
 
-					const url = urlInputRef.current?.value.trim();
+                    const url = urlInputRef.current?.value.trim();
 
-					if (!url) {
-					  return;
-					}
+                    if (!url) {
+                      return;
+                    }
 
-					try {
-					  const parsedUrl = new URL(url);
+                    try {
+                      const parsedUrl = new URL(url);
 
-					  if (!['http:', 'https:', 'blob:'].includes(parsedUrl.protocol)) {
-						toast.error('Please enter a valid HTTP(S) video URL.');
-						return;
-					  }
+                      if (!['http:', 'https:', 'blob:'].includes(parsedUrl.protocol)) {
+                        toast.error('Please enter a valid HTTP(S) video URL.');
+                        return;
+                      }
 
+                      setVideoSource('url');
 					  loadVideo(parsedUrl.href);
-					} catch {
-					  toast.error('Please enter a valid video URL.');
-					}
-				  }}
-				>
-				<input
-				  type="url"
-				  value={urlInput}
-				  onChange={(event) => {
-					setUrlInput(event.target.value);
-				  }}
-				  autoComplete="off"
-				  spellCheck={false}
-				  autoCorrect="off"
-				  autoCapitalize="off"
-				  ref={urlInputRef}
-				  id="url-input"
-				  className="w-96 p-2 my-4 bg-gray-800 text-white rounded border border-gray-600"
-				  placeholder="https://example.com/video.mp4"
-				/>
+                    } catch {
+                      toast.error('Please enter a valid video URL.');
+                    }
+                  }}
+                >
+                  <input
+                    type="url"
+                    value={urlInput}
+                    onChange={(event) => {
+                      setUrlInput(event.target.value);
+                    }}
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    ref={urlInputRef}
+                    id="url-input"
+                    className="w-96 p-2 my-4 bg-gray-800 text-white rounded border border-gray-600"
+                    placeholder="https://example.com/video.mp4"
+                  />
 
-
-				  {urlInput.trim() && (
-					  <button
-						type="submit"
-						className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded"
-					  >
-						Open
-					  </button>
-					)}
-				</form>
-
+                  {urlInput.trim() && (
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded"
+                    >
+                      Open
+                    </button>
+                  )}
+                </form>
               </div>
             </div>
           </div>
