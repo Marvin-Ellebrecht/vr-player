@@ -61,9 +61,9 @@ export function App() {
 
   const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
   const [galleryUrls, setGalleryUrls] = useState<Record<string, string>>({});
-  const [galleryThumbnails, setGalleryThumbnails] = useState<
-    Record<string, string>
-  >({});
+  const [galleryThumbnails, setGalleryThumbnails] = useState< Record<string, string> >({});
+  const [urlInput, setUrlInput] = useState('');
+
 
   /*
    * ---------------------------------------------------------
@@ -797,21 +797,45 @@ const closeViewer = async () => {
             console.log('Video can play');
             setReady(true);
           }}
-          onError={(event) => {
-            const video = event.currentTarget;
+		  
+			onError={(event) => {
+			  const video = event.currentTarget;
+			  const error = video.error;
 
-            console.error(
-              'VIDEO ERROR:',
-              video.error,
-              video.src,
-            );
+			  console.error('VIDEO ERROR', {
+				src: video.currentSrc || video.src,
+				code: error?.code,
+				message: error?.message,
+				networkState: video.networkState,
+				readyState: video.readyState,
+			  });
 
-            setReady(false);
+			  setReady(false);
 
-            toast.error(
-              'Video could not be loaded.',
-            );
-          }}
+			  let message = 'Video could not be loaded.';
+
+			  switch (error?.code) {
+				case MediaError.MEDIA_ERR_ABORTED:
+				  message = 'Video loading was aborted.';
+				  break;
+
+				case MediaError.MEDIA_ERR_NETWORK:
+				  message = 'Could not download the video.';
+				  break;
+
+				case MediaError.MEDIA_ERR_DECODE:
+				  message =
+					'Downloaded the video but cannot decode its format/codec.';
+				  break;
+
+				case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+				  message =
+					'Does not support this video URL or codec.';
+				  break;
+			  }
+
+			  toast.error(message);
+			}}
           onTimeUpdate={(event) => {
             setCurrentTime(
               event.currentTarget.currentTime,
@@ -862,25 +886,57 @@ const closeViewer = async () => {
               </label>
 
               <div>
-                <input
-                  type="url"
-                  autoComplete="off"
-                  spellCheck="false"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  ref={urlInputRef}
-                  id="url-input"
-                  className="w-96 p-2 my-4 bg-gray-800 text-white rounded border border-gray-600"
-                  placeholder="https://example.com/video.mp4"
-                  onChange={(event) => {
-                    const url =
-                      event.target.value.trim();
+                <form
+				  onSubmit={(event) => {
+					event.preventDefault();
 
-                    if (url) {
-                      loadVideo(url);
-                    }
-                  }}
-                />
+					const url = urlInputRef.current?.value.trim();
+
+					if (!url) {
+					  return;
+					}
+
+					try {
+					  const parsedUrl = new URL(url);
+
+					  if (!['http:', 'https:', 'blob:'].includes(parsedUrl.protocol)) {
+						toast.error('Please enter a valid HTTP(S) video URL.');
+						return;
+					  }
+
+					  loadVideo(parsedUrl.href);
+					} catch {
+					  toast.error('Please enter a valid video URL.');
+					}
+				  }}
+				>
+				<input
+				  type="url"
+				  value={urlInput}
+				  onChange={(event) => {
+					setUrlInput(event.target.value);
+				  }}
+				  autoComplete="off"
+				  spellCheck={false}
+				  autoCorrect="off"
+				  autoCapitalize="off"
+				  ref={urlInputRef}
+				  id="url-input"
+				  className="w-96 p-2 my-4 bg-gray-800 text-white rounded border border-gray-600"
+				  placeholder="https://example.com/video.mp4"
+				/>
+
+
+				  {urlInput.trim() && (
+					  <button
+						type="submit"
+						className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded"
+					  >
+						Open
+					  </button>
+					)}
+				</form>
+
               </div>
             </div>
           </div>
