@@ -9,6 +9,7 @@ export function DebugPlayer({
   layout,
   flipLayout,
   format,
+  autoPlay,
   view = 'left',
 }: {
   video: HTMLVideoElement;
@@ -16,6 +17,7 @@ export function DebugPlayer({
   layout: Layout;
   flipLayout: boolean;
   format: Format;
+  autoPlay: boolean;
   view?: 'left' | 'right';
 }) {
   useEffect(() => {
@@ -27,11 +29,27 @@ export function DebugPlayer({
       format,
       view,
     );
+
     void renderer.start();
+
+    if (autoPlay) {
+      void video.play().catch((error) => {
+        console.warn('Debug player autoplay failed:', error);
+      });
+    }
+
     return () => {
       renderer.stop();
     };
-  }, [canvas, flipLayout, format, layout, video, view]);
+  }, [
+    autoPlay,
+    canvas,
+    flipLayout,
+    format,
+    layout,
+    video,
+    view,
+  ]);
 
   return null;
 }

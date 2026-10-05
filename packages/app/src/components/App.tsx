@@ -648,6 +648,7 @@ const closeViewer = async () => {
             layout={layout}
             flipLayout={flipLayout}
             format={format}
+			autoPlay={autoPlay}
           />
         )}
 
