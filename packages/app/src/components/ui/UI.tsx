@@ -15,9 +15,10 @@ import { useXRSession } from 'hooks/useXRSession';
 import clsx from 'clsx';
 import type { DropzoneInputProps } from 'react-dropzone';
 
-export function UI({ fileInputProps, onSelectFolder,}: {fileInputProps: DropzoneInputProps;
-  onSelectFolder: () => void;
+export function UI({fileInputProps, onSelectFile, onSelectFolder,}: 
+	{ fileInputProps: DropzoneInputProps; onSelectFile: () => void; onSelectFolder: () => void;
 }) {
+
 
   const [autoPlay, setAutoPlay] = useAtom(autoPlayAtom);
   const [autoDetect, setAutoDetect] = useAtom(autoDetectAtom);
@@ -58,13 +59,20 @@ export function UI({ fileInputProps, onSelectFolder,}: {fileInputProps: Dropzone
         }
       </Control>
 
-      <label
-        htmlFor="file-input"
-        className="cursor-pointer flex m-2 py-2 px-4 text-sm font-medium text-white bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg shadow-sm"
-      >
-        Select File
-        <input id="file-input" {...fileInputProps} />
-      </label>
+		<button
+		  type="button"
+		  className="cursor-pointer flex m-2 py-2 px-4 text-sm font-medium text-white bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg shadow-sm"
+		  onClick={onSelectFile}
+		>
+		  Select File
+		</button>
+
+		<input
+		  id="file-input"
+		  {...fileInputProps}
+		  className="hidden"
+		/>
+
 
       <button
   type="button"
