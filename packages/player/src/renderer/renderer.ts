@@ -4,19 +4,19 @@ import type { Format, Layout } from '../types';
 import type { Regl } from 'regl';
 import type { RenderProps } from './renderProps';
 
-// fullscreen clip-space quad
 const QUAD_POSITIONS = [
   [-1, -1, 0],
   [1, -1, 0],
   [1, 1, 0],
   [-1, 1, 0],
 ];
+
 const QUAD_INDICES = [
   [0, 1, 2],
   [0, 2, 3],
 ];
 
-const VERT_SHADER = `
+const VERT_SHADER_WEBGL1 = `
 precision highp float;
 
 attribute vec3 position;
@@ -29,7 +29,7 @@ void main() {
 }
 `;
 
-const RAY_PREAMBLE = `
+const RAY_PREAMBLE_WEBGL1 = `
 precision highp float;
 
 #define PI 3.14159265359
@@ -45,97 +45,355 @@ varying vec2 clipCoord;
 
 void getRay(out vec3 rayOrigin, out vec3 rayDir) {
   rayOrigin = modelSpaceEye;
-  vec4 nearModel = inverseModelViewProjection * vec4(clipCoord, -1.0, 1.0);
-  vec4 farModel  = inverseModelViewProjection * vec4(clipCoord,  1.0, 1.0);
+
+  vec4 nearModel =
+    inverseModelViewProjection * vec4(clipCoord, -1.0, 1.0);
+
+  vec4 farModel =
+    inverseModelViewProjection * vec4(clipCoord, 1.0, 1.0);
+
   nearModel /= nearModel.w;
-  farModel  /= farModel.w;
+  farModel /= farModel.w;
+
   rayDir = normalize(farModel.xyz - nearModel.xyz);
 }
 `;
 
-// 360°: viewer is always inside the sphere, no discard needed
-const FRAG_360 =
-  RAY_PREAMBLE +
+const FRAG_360_WEBGL1 =
+  RAY_PREAMBLE_WEBGL1 +
   `
 void main() {
-  vec3 rayOrigin, rayDir;
+  vec3 rayOrigin;
+  vec3 rayDir;
+
   getRay(rayOrigin, rayDir);
 
-  // Simplified quadratic (rayDir is normalized so a=1)
   float halfB = dot(rayOrigin, rayDir);
-  float c = dot(rayOrigin, rayOrigin) - SPHERE_RADIUS * SPHERE_RADIUS;
-  float t = -halfB + sqrt(halfB * halfB - c);
+  float c =
+    dot(rayOrigin, rayOrigin) -
+    SPHERE_RADIUS * SPHERE_RADIUS;
+
+  float discriminant = halfB * halfB - c;
+
+  if (discriminant < 0.0) {
+    discard;
+  }
+
+  float t = -halfB + sqrt(discriminant);
+
   vec3 hit = rayOrigin + t * rayDir;
 
   float theta = atan(hit.z, hit.x);
-  float phi   = asin(clamp(hit.y / SPHERE_RADIUS, -1.0, 1.0));
+  float phi = asin(
+    clamp(hit.y / SPHERE_RADIUS, -1.0, 1.0)
+  );
 
-  mediump vec2 uv = vec2(theta / TWO_PI + 0.5, phi / PI + 0.5);
-  mediump vec2 mappedUv = uv * texCoordScaleOffset.xy + texCoordScaleOffset.zw;
+  vec2 uv = vec2(
+    theta / TWO_PI + 0.5,
+    phi / PI + 0.5
+  );
+
+  vec2 mappedUv =
+    uv * texCoordScaleOffset.xy +
+    texCoordScaleOffset.zw;
+
   gl_FragColor = texture2D(texture, mappedUv);
+
 }
 `;
 
-// 180°: same ray-sphere but discard back hemisphere
-const FRAG_180 =
-  RAY_PREAMBLE +
+const FRAG_180_WEBGL1 =
+  RAY_PREAMBLE_WEBGL1 +
   `
 void main() {
-  vec3 rayOrigin, rayDir;
+  vec3 rayOrigin;
+  vec3 rayDir;
+
   getRay(rayOrigin, rayDir);
 
   float halfB = dot(rayOrigin, rayDir);
-  float c = dot(rayOrigin, rayOrigin) - SPHERE_RADIUS * SPHERE_RADIUS;
-  float disc = halfB * halfB - c;
-  if (disc < 0.0) discard;
-  float t = -halfB + sqrt(disc);
+  float c =
+    dot(rayOrigin, rayOrigin) -
+    SPHERE_RADIUS * SPHERE_RADIUS;
+
+  float discriminant = halfB * halfB - c;
+
+  if (discriminant < 0.0) {
+    discard;
+  }
+
+  float t = -halfB + sqrt(discriminant);
   vec3 hit = rayOrigin + t * rayDir;
 
   float theta = atan(hit.z, hit.x);
-  float phi   = asin(clamp(hit.y / SPHERE_RADIUS, -1.0, 1.0));
+  float phi = asin(
+    clamp(hit.y / SPHERE_RADIUS, -1.0, 1.0)
+  );
 
-  mediump vec2 uv = vec2(theta / TWO_PI + 0.5, phi / PI + 0.5);
+  vec2 uv = vec2(
+    theta / TWO_PI + 0.5,
+    phi / PI + 0.5
+  );
 
-  // discard back hemisphere
-  if (uv.x < 0.25 || uv.x > 0.75) discard;
-  // remap [0.25, 0.75] -> [0, 1]
+  if (uv.x < 0.25 || uv.x > 0.75) {
+    discard;
+  }
+
   uv.x = (uv.x - 0.25) * 2.0;
 
-  mediump vec2 mappedUv = uv * texCoordScaleOffset.xy + texCoordScaleOffset.zw;
+  vec2 mappedUv =
+    uv * texCoordScaleOffset.xy +
+    texCoordScaleOffset.zw;
+
   gl_FragColor = texture2D(texture, mappedUv);
 }
 `;
 
-// Screen: ray-plane intersection
-const FRAG_SCREEN =
-  RAY_PREAMBLE +
+const FRAG_SCREEN_WEBGL1 =
+  RAY_PREAMBLE_WEBGL1 +
   `
 void main() {
-  vec3 rayOrigin, rayDir;
+  vec3 rayOrigin;
+  vec3 rayDir;
+
   getRay(rayOrigin, rayDir);
 
-  // ray-plane intersection: screen quad lies at z = 0, spanning [-1,1] in x and y
-  float t = -rayOrigin.z / rayDir.z;
-  if (t < 0.0) discard;
-  vec3 hit = rayOrigin + t * rayDir;
-  if (abs(hit.x) > 1.0 || abs(hit.y) > 1.0) discard;
-  mediump vec2 uv = vec2(1.0 - (hit.x * 0.5 + 0.5), hit.y * 0.5 + 0.5);
+  if (abs(rayDir.z) < 0.00001) {
+    discard;
+  }
 
-  mediump vec2 mappedUv = uv * texCoordScaleOffset.xy + texCoordScaleOffset.zw;
+  float t = -rayOrigin.z / rayDir.z;
+
+  if (t < 0.0) {
+    discard;
+  }
+
+  vec3 hit = rayOrigin + t * rayDir;
+
+  if (
+    abs(hit.x) > 1.0 ||
+    abs(hit.y) > 1.0
+  ) {
+    discard;
+  }
+
+  vec2 uv = vec2(
+    1.0 - (hit.x * 0.5 + 0.5),
+    hit.y * 0.5 + 0.5
+  );
+
+  vec2 mappedUv =
+    uv * texCoordScaleOffset.xy +
+    texCoordScaleOffset.zw;
+
   gl_FragColor = texture2D(texture, mappedUv);
 }
 `;
 
-function getFragShader(format: Format): string {
+const VERT_SHADER_WEBGL2 = `#version 300 es
+precision highp float;
+
+in vec3 position;
+
+out vec2 clipCoord;
+
+void main() {
+  clipCoord = position.xy;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+
+const RAY_PREAMBLE_WEBGL2 = `#version 300 es
+precision highp float;
+
+#define PI 3.14159265359
+#define TWO_PI 6.28318530718
+#define SPHERE_RADIUS 1.0
+
+uniform mat4 inverseModelViewProjection;
+uniform vec3 modelSpaceEye;
+uniform sampler2D texture;
+uniform mediump vec4 texCoordScaleOffset;
+
+in vec2 clipCoord;
+
+void getRay(out vec3 rayOrigin, out vec3 rayDir) {
+  rayOrigin = modelSpaceEye;
+
+  vec4 nearModel =
+    inverseModelViewProjection * vec4(clipCoord, -1.0, 1.0);
+
+  vec4 farModel =
+    inverseModelViewProjection * vec4(clipCoord, 1.0, 1.0);
+
+  nearModel /= nearModel.w;
+  farModel /= farModel.w;
+
+  rayDir = normalize(farModel.xyz - nearModel.xyz);
+}
+`;
+
+const FRAG_360_WEBGL2 =
+  RAY_PREAMBLE_WEBGL2 +
+  `
+out vec4 outColor;
+
+void main() {
+  vec3 rayOrigin;
+  vec3 rayDir;
+
+  getRay(rayOrigin, rayDir);
+
+  float halfB = dot(rayOrigin, rayDir);
+  float c =
+    dot(rayOrigin, rayOrigin) -
+    SPHERE_RADIUS * SPHERE_RADIUS;
+
+  float discriminant = halfB * halfB - c;
+
+  if (discriminant < 0.0) {
+    discard;
+  }
+
+  float t = -halfB + sqrt(discriminant);
+  vec3 hit = rayOrigin + t * rayDir;
+
+  float theta = atan(hit.z, hit.x);
+  float phi = asin(
+    clamp(hit.y / SPHERE_RADIUS, -1.0, 1.0)
+  );
+
+  vec2 uv = vec2(
+    theta / TWO_PI + 0.5,
+    phi / PI + 0.5
+  );
+
+  vec2 mappedUv =
+    uv * texCoordScaleOffset.xy +
+    texCoordScaleOffset.zw;
+
+  outColor = texture(texture, mappedUv);
+}
+`;
+
+const FRAG_180_WEBGL2 =
+  RAY_PREAMBLE_WEBGL2 +
+  `
+out vec4 outColor;
+
+void main() {
+  vec3 rayOrigin;
+  vec3 rayDir;
+
+  getRay(rayOrigin, rayDir);
+
+  float halfB = dot(rayOrigin, rayDir);
+  float c =
+    dot(rayOrigin, rayOrigin) -
+    SPHERE_RADIUS * SPHERE_RADIUS;
+
+  float discriminant = halfB * halfB - c;
+
+  if (discriminant < 0.0) {
+    discard;
+  }
+
+  float t = -halfB + sqrt(discriminant);
+  vec3 hit = rayOrigin + t * rayDir;
+
+  float theta = atan(hit.z, hit.x);
+  float phi = asin(
+    clamp(hit.y / SPHERE_RADIUS, -1.0, 1.0)
+  );
+
+  vec2 uv = vec2(
+    theta / TWO_PI + 0.5,
+    phi / PI + 0.5
+  );
+
+  if (uv.x < 0.25 || uv.x > 0.75) {
+    discard;
+  }
+
+  uv.x = (uv.x - 0.25) * 2.0;
+
+  vec2 mappedUv =
+    uv * texCoordScaleOffset.xy +
+    texCoordScaleOffset.zw;
+
+  outColor = texture(texture, mappedUv);
+}
+`;
+
+const FRAG_SCREEN_WEBGL2 =
+  RAY_PREAMBLE_WEBGL2 +
+  `
+out vec4 outColor;
+
+void main() {
+  vec3 rayOrigin;
+  vec3 rayDir;
+
+  getRay(rayOrigin, rayDir);
+
+  if (abs(rayDir.z) < 0.00001) {
+    discard;
+  }
+
+  float t = -rayOrigin.z / rayDir.z;
+
+  if (t < 0.0) {
+    discard;
+  }
+
+  vec3 hit = rayOrigin + t * rayDir;
+
+  if (
+    abs(hit.x) > 1.0 ||
+    abs(hit.y) > 1.0
+  ) {
+    discard;
+  }
+
+  vec2 uv = vec2(
+    1.0 - (hit.x * 0.5 + 0.5),
+    hit.y * 0.5 + 0.5
+  );
+
+  vec2 mappedUv =
+    uv * texCoordScaleOffset.xy +
+    texCoordScaleOffset.zw;
+
+  outColor = texture(texture, mappedUv);
+}
+`;
+
+export type WebGLVersion = 1 | 2;
+
+function getFragShader(
+  format: Format,
+  version: WebGLVersion,
+): string {
+  if (version === 2) {
+    switch (format) {
+      case '360':
+        return FRAG_360_WEBGL2;
+      case '180':
+        return FRAG_180_WEBGL2;
+      case 'screen':
+      default:
+        return FRAG_SCREEN_WEBGL2;
+    }
+  }
+
   switch (format) {
     case '360':
-      return FRAG_360;
+      return FRAG_360_WEBGL1;
     case '180':
-      return FRAG_180;
+      return FRAG_180_WEBGL1;
     case 'screen':
-    // falls through
     default:
-      return FRAG_SCREEN;
+      return FRAG_SCREEN_WEBGL1;
   }
 }
 
@@ -149,12 +407,13 @@ export class VideoFrameTracker {
       this.hasNewFrame = false;
       this.scheduleCallback();
     }
-    // If requestVideoFrameCallback is not supported, hasNewFrame stays true
-    // so every render frame will upload the texture (legacy behavior).
   }
 
   private scheduleCallback() {
-    if (this.stopped) return;
+    if (this.stopped) {
+      return;
+    }
+
     this.vfcHandle = this.video.requestVideoFrameCallback(() => {
       this.hasNewFrame = true;
       this.scheduleCallback();
@@ -162,15 +421,17 @@ export class VideoFrameTracker {
   }
 
   consumeFrame(): boolean {
-    if (this.hasNewFrame) {
-      this.hasNewFrame = false;
-      return true;
+    if (!this.hasNewFrame) {
+      return false;
     }
-    return false;
+
+    this.hasNewFrame = false;
+    return true;
   }
 
   stop() {
     this.stopped = true;
+
     if ('cancelVideoFrameCallback' in this.video) {
       this.video.cancelVideoFrameCallback(this.vfcHandle);
     }
@@ -181,6 +442,132 @@ export abstract class Renderer {
   protected abstract startDrawLoop(): Promise<void>;
   protected abstract stopDrawLoop(): void;
 
+  protected readonly regl: Regl;
+
+  protected readonly cmdRender: reglInit.DrawCommand<
+    reglInit.DefaultContext,
+    RenderProps
+  >;
+
+  protected readonly webglVersion: WebGLVersion;
+
+  constructor(
+    protected readonly canvas: HTMLCanvasElement,
+    protected readonly layout: Layout,
+    protected readonly flipLayout: boolean,
+    protected readonly format: Format,
+    webglVersion: WebGLVersion = 1,
+  ) {
+    this.webglVersion = webglVersion;
+
+const dpr = Math.min(
+  window.devicePixelRatio || 1,
+  2,
+);
+
+const width = Math.max(
+  1,
+  Math.round(
+    this.canvas.clientWidth * dpr,
+  ),
+);
+
+const height = Math.max(
+  1,
+  Math.round(
+    this.canvas.clientHeight * dpr,
+  ),
+);
+
+if (
+  this.canvas.width !== width ||
+  this.canvas.height !== height
+) {
+  this.canvas.width = width;
+  this.canvas.height = height;
+}
+
+
+	const gl =
+	  webglVersion === 2
+		? this.canvas.getContext('webgl2', {
+			alpha: false,
+			antialias: false,
+			depth: false,
+			stencil: false,
+			preserveDrawingBuffer: false,
+		  })
+		: this.canvas.getContext('webgl', {
+			alpha: false,
+			antialias: false,
+			depth: false,
+			stencil: false,
+			preserveDrawingBuffer: false,
+		  });
+
+	if (!gl) {
+	  throw new Error(
+		`WebGL ${webglVersion} is not supported`,
+	  );
+	}
+
+this.regl = reglInit({
+  gl,
+  pixelRatio: 1,
+});
+
+
+    this.cmdRender = this.regl({
+      vert:
+        webglVersion === 2
+          ? VERT_SHADER_WEBGL2
+          : VERT_SHADER_WEBGL1,
+
+      frag: getFragShader(
+        this.format,
+        webglVersion,
+      ),
+
+      attributes: {
+        position: QUAD_POSITIONS,
+      },
+
+      uniforms: {
+        inverseModelViewProjection:
+          this.regl.prop<
+            RenderProps,
+            'inverseModelViewProjection'
+          >('inverseModelViewProjection'),
+
+        modelSpaceEye:
+          this.regl.prop<
+            RenderProps,
+            'modelSpaceEye'
+          >('modelSpaceEye'),
+
+        texture:
+          this.regl.prop<
+            RenderProps,
+            'texture'
+          >('texture'),
+
+        texCoordScaleOffset:
+          this.regl.prop<
+            RenderProps,
+            'texCoordScaleOffset'
+          >('texCoordScaleOffset'),
+      },
+
+      viewport:
+        this.regl.prop<
+          RenderProps,
+          'viewport'
+        >('viewport'),
+
+      elements: QUAD_INDICES,
+    });
+  }
+
   public async start() {
     await this.startDrawLoop();
   }
@@ -190,131 +577,131 @@ export abstract class Renderer {
     this.regl.destroy();
   }
 
-  protected readonly regl: Regl;
-
-  protected readonly cmdRender: reglInit.DrawCommand<
-    reglInit.DefaultContext,
-    RenderProps
-  >;
-
-  constructor(
-    protected readonly canvas: HTMLCanvasElement,
-    protected readonly layout: Layout,
-    protected readonly flipLayout: boolean,
-    protected readonly format: Format,
+  protected getAspectRatio(
+    video: HTMLVideoElement,
   ) {
-    const pixelRatio = 1;
-
-this.canvas.width = Math.floor(  this.canvas.clientWidth * pixelRatio,);
-this.canvas.height = Math.floor(  this.canvas.clientHeight * pixelRatio,);
-const renderHeight = 1080;
-
-const aspectRatio =  this.canvas.clientWidth / this.canvas.clientHeight;
-
-this.canvas.width = Math.round(renderHeight * aspectRatio);
-this.canvas.height = renderHeight;
-
-this.regl = reglInit({
-  canvas: this.canvas,
-  pixelRatio: 1,
-});
-
-
-    this.cmdRender = this.regl({
-      vert: VERT_SHADER,
-      frag: getFragShader(this.format),
-      attributes: {
-        position: QUAD_POSITIONS,
-      },
-      // TODO: https://github.com/regl-project/regl/pull/632
-      uniforms: {
-        inverseModelViewProjection: this.regl.prop<
-          RenderProps,
-          'inverseModelViewProjection'
-        >('inverseModelViewProjection'),
-        modelSpaceEye: this.regl.prop<RenderProps, 'modelSpaceEye'>(
-          'modelSpaceEye',
-        ),
-        texture: this.regl.prop<RenderProps, 'texture'>('texture'),
-        texCoordScaleOffset: this.regl.prop<RenderProps, 'texCoordScaleOffset'>(
-          'texCoordScaleOffset',
-        ),
-      },
-      viewport: this.regl.prop<RenderProps, 'viewport'>('viewport'),
-      elements: QUAD_INDICES,
-    });
-  }
-
-  private getAspectRatio(video: HTMLVideoElement) {
     switch (this.layout) {
       case 'stereoLeftRight':
-        return (video.videoWidth * 0.5) / video.videoHeight;
+        return (
+          (video.videoWidth * 0.5) /
+          video.videoHeight
+        );
+
       case 'stereoTopBottom':
-        return (video.videoWidth / video.videoHeight) * 0.5;
+        return (
+          (video.videoWidth / video.videoHeight) *
+          0.5
+        );
+
       case 'mono':
-      // falls through
       default:
-        return video.videoWidth / video.videoHeight;
+        return (
+          video.videoWidth /
+          video.videoHeight
+        );
     }
   }
 
-  protected getModelMatrix(video: HTMLVideoElement) {
-    const aspectRatio = this.getAspectRatio(video);
+  protected getModelMatrix(
+    video: HTMLVideoElement,
+  ) {
+    const aspectRatio =
+      this.getAspectRatio(video);
 
     const model = mat4.create();
-    // rotate model 180 deg to flip z axis as WebXR looks towards -z
-    // https://developer.mozilla.org/en-US/docs/Web/API/WebXR_Device_API/Geometry
-    mat4.rotateY(model, model, Math.PI);
+
+    mat4.rotateY(
+      model,
+      model,
+      Math.PI,
+    );
 
     if (this.format === 'screen') {
       const screenHeight = 1;
 
-      // scale according to aspect ratio
-      mat4.scale(model, model, [screenHeight * aspectRatio, screenHeight, 1]);
-      // move screen back a bit
-      mat4.translate(model, model, [0, 0, screenHeight]);
+      mat4.scale(
+        model,
+        model,
+        [
+          screenHeight * aspectRatio,
+          screenHeight,
+          1,
+        ],
+      );
+
+      mat4.translate(
+        model,
+        model,
+        [0, 0, screenHeight],
+      );
     }
 
     if (this.format !== 'screen') {
-      // rotate model 90 deg to look at the center of the video
-      mat4.rotateY(model, model, -Math.PI / 2);
+      mat4.rotateY(
+        model,
+        model,
+        -Math.PI / 2,
+      );
     }
 
     return model;
   }
 
-  protected getInverseModelMatrix(video: HTMLVideoElement): mat4 {
-    const inv = mat4.create();
-    mat4.invert(inv, this.getModelMatrix(video));
-    return inv;
+  protected getInverseModelMatrix(
+    video: HTMLVideoElement,
+  ): mat4 {
+    const inverse = mat4.create();
+
+    mat4.invert(
+      inverse,
+      this.getModelMatrix(video),
+    );
+
+    return inverse;
   }
 
   protected getTexCoordScaleOffsets() {
-    let offsets;
+    let offsets: Float32Array[];
+
     switch (this.layout) {
       case 'stereoLeftRight':
         offsets = [
-          new Float32Array([0.5, 1.0, 0.0, 0.0]),
-          new Float32Array([0.5, 1.0, 0.5, 0.0]),
+          new Float32Array([
+            0.5, 1.0, 0.0, 0.0,
+          ]),
+          new Float32Array([
+            0.5, 1.0, 0.5, 0.0,
+          ]),
         ];
         break;
+
       case 'stereoTopBottom':
         offsets = [
-          new Float32Array([1.0, 0.5, 0.0, 0.0]),
-          new Float32Array([1.0, 0.5, 0.0, 0.5]),
+          new Float32Array([
+            1.0, 0.5, 0.0, 0.0,
+          ]),
+          new Float32Array([
+            1.0, 0.5, 0.0, 0.5,
+          ]),
         ];
         break;
+
       case 'mono':
-      // falls through
       default:
         offsets = [
-          new Float32Array([1.0, 1.0, 0.0, 0.0]),
-          new Float32Array([1.0, 1.0, 0.0, 0.0]),
+          new Float32Array([
+            1.0, 1.0, 0.0, 0.0,
+          ]),
+          new Float32Array([
+            1.0, 1.0, 0.0, 0.0,
+          ]),
         ];
     }
+
     if (this.flipLayout) {
       return offsets.reverse();
     }
+
     return offsets;
   }
 }

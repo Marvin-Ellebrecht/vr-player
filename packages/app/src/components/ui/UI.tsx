@@ -14,9 +14,23 @@ import { useAtom, useAtomValue } from 'jotai';
 import { useXRSession } from 'hooks/useXRSession';
 import clsx from 'clsx';
 import type { DropzoneInputProps } from 'react-dropzone';
+import type { RenderBackend } from '@vr-player/player';
 
-export function UI({fileInputProps, onSelectFile, onSelectFolder,}: 
-	{ fileInputProps: DropzoneInputProps; onSelectFile: () => void; onSelectFolder: () => void;
+
+export function UI({
+  fileInputProps,
+  onSelectFile,
+  onSelectFolder,
+  renderBackend,
+  onRenderBackendChange,
+}: {
+  fileInputProps: DropzoneInputProps;
+  onSelectFile: () => void;
+  onSelectFolder: () => void;
+  renderBackend: RenderBackend;
+  onRenderBackendChange: (
+    backend: RenderBackend,
+  ) => void;
 }) {
 
 
@@ -32,6 +46,7 @@ export function UI({fileInputProps, onSelectFile, onSelectFolder,}:
   const [debug, setDebug] = useAtom(debugAtom);
 
   const [xrSupported, xrSession, requestXrSession] = useXRSession();
+  const webGpuSupported = typeof navigator !== 'undefined' && 'gpu' in navigator;
 
   return (
     <div
@@ -139,26 +154,73 @@ export function UI({fileInputProps, onSelectFile, onSelectFolder,}:
         </GroupControlElement>
       </GroupControl>
 
-      <GroupControl>
-        <GroupControlElement
-          aria-current={format === 'screen'}
-          onClick={() => setFormat('screen')}
-        >
-          Screen
-        </GroupControlElement>
-        <GroupControlElement
-          aria-current={format === '180'}
-          onClick={() => setFormat('180')}
-        >
-          180°
-        </GroupControlElement>
-        <GroupControlElement
-          aria-current={format === '360'}
-          onClick={() => setFormat('360')}
-        >
-          360°
-        </GroupControlElement>
-      </GroupControl>
+
+
+<GroupControl>
+  <GroupControlElement
+    aria-current={format === 'screen'}
+    onClick={() => setFormat('screen')}
+  >
+    Screen
+  </GroupControlElement>
+
+  <GroupControlElement
+    aria-current={format === '180'}
+    onClick={() => setFormat('180')}
+  >
+    180°
+  </GroupControlElement>
+
+  <GroupControlElement
+    aria-current={format === '360'}
+    onClick={() => setFormat('360')}
+  >
+    360°
+  </GroupControlElement>
+</GroupControl>
+
+<div className="flex items-center m-2">
+  <label
+    htmlFor="render-backend"
+    className="mr-2 text-sm text-gray-300"
+  >
+    Renderer
+  </label>
+
+  <select
+    id="render-backend"
+    value={renderBackend}
+    onChange={(event) => {
+      onRenderBackendChange(
+        event.target.value as RenderBackend,
+      );
+    }}
+    className="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-white hover:bg-gray-600"
+  >
+    <option value="auto">
+      Auto
+    </option>
+
+    <option value="webgl1">
+      WebGL 1
+    </option>
+
+    <option value="webgl2">
+      WebGL 2
+    </option>
+
+    <option
+      value="webgpu"
+      disabled={!webGpuSupported}
+    >
+      WebGPU
+      {!webGpuSupported
+        ? ' (not supported)'
+        : ''}
+    </option>
+  </select>
+</div>
+
 
 <Control
   aria-current={debug}
@@ -166,6 +228,7 @@ export function UI({fileInputProps, onSelectFile, onSelectFolder,}:
 >
   Watch Video
 </Control>
+
 
 
       

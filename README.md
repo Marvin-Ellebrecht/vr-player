@@ -10,6 +10,7 @@ This fork includes
 - an auto-installer for Windows and Linux. After installation, the folder is portable.
 - a gallery with auto-play previews
 - a working monitor previewer
+- WebGPU or WebGL1 render engine for the monitor previewer selectable
 
 ---
 

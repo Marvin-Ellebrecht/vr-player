@@ -1,27 +1,105 @@
-import { Renderer, VideoFrameTracker } from './renderer';
 import { mat4, vec4 } from 'gl-matrix';
 import type { Format, Layout } from '../types';
-import type { RenderProps } from './renderProps';
+import {
+  Renderer,
+  VideoFrameTracker,
+} from './renderer';
+import {
+  resolveRenderBackend,
+  type RenderBackend,
+} from './renderBackend';
+import { WebGPUDebugRenderer } from './webgpuDebugRenderer';
 import type { Texture2DOptions } from 'regl';
+import type { RenderProps } from './renderProps';
 
-export class DebugRenderer extends Renderer {
+export class DebugRenderer {
+  private renderer:
+    | Renderer
+    | WebGPUDebugRenderer
+    | null = null;
+
+  private readonly backend: Exclude<
+    RenderBackend,
+    'auto'
+  >;
+
+  constructor(
+    private readonly video: HTMLVideoElement,
+    private readonly canvas: HTMLCanvasElement,
+    private readonly layout: Layout,
+    private readonly flipLayout: boolean,
+    private readonly format: Format,
+    private readonly eye: 'left' | 'right',
+    requestedBackend: RenderBackend = 'auto',
+  ) {
+    this.backend =
+      resolveRenderBackend(
+        requestedBackend,
+        canvas,
+      );
+  }
+
+  async start(): Promise<void> {
+    if (this.backend === 'webgpu') {
+      const renderer =
+        new WebGPUDebugRenderer(
+          this.video,
+          this.canvas,
+          this.layout,
+          this.flipLayout,
+          this.format,
+          this.eye,
+        );
+
+      this.renderer = renderer;
+
+      await renderer.start();
+
+      return;
+    }
+
+    const renderer =
+      new WebGLDebugRenderer(
+        this.video,
+        this.canvas,
+        this.layout,
+        this.flipLayout,
+        this.format,
+        this.eye,
+        this.backend === 'webgl2'
+          ? 2
+          : 1,
+      );
+
+    this.renderer = renderer;
+
+    await renderer.start();
+  }
+
+  stop() {
+    this.renderer?.stop();
+    this.renderer = null;
+  }
+
+  getBackend() {
+    return this.backend;
+  }
+}
+
+class WebGLDebugRenderer extends Renderer {
   private raf = 0;
-  private frameTracker: VideoFrameTracker | null = null;
+
+  private frameTracker:
+    | VideoFrameTracker
+    | null = null;
 
   private yaw = 0;
   private pitch = 0;
   private fov = Math.PI / 2;
 
-
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
-private hasInteracted = false;
-private fps = 0;
-private fpsFrames = 0;
-private fpsLastTime = performance.now();
-
-
 
   constructor(
     private readonly video: HTMLVideoElement,
@@ -30,234 +108,352 @@ private fpsLastTime = performance.now();
     flipLayout: boolean,
     format: Format,
     private readonly eye: 'left' | 'right',
+    webglVersion: 1 | 2,
   ) {
-    super(canvas, layout, flipLayout, format);
+    super(
+      canvas,
+      layout,
+      flipLayout,
+      format,
+      webglVersion,
+    );
 
-    this.canvas.style.cursor = 'grab';
+    canvas.style.cursor = 'grab';
 
-    this.canvas.addEventListener('pointerdown', this.handlePointerDown);
-    this.canvas.addEventListener('pointermove', this.handlePointerMove);
-    this.canvas.addEventListener('pointerup', this.handlePointerUp);
-    this.canvas.addEventListener('pointercancel', this.handlePointerUp);
-    this.canvas.addEventListener('pointerleave', this.handlePointerUp);
-    this.canvas.addEventListener('wheel', this.handleWheel, {
-      passive: false,
-    });
+    canvas.addEventListener(
+      'pointerdown',
+      this.handlePointerDown,
+    );
 
-    window.addEventListener('keydown', this.handleKeyDown);
+    canvas.addEventListener(
+      'pointermove',
+      this.handlePointerMove,
+    );
+
+    canvas.addEventListener(
+      'pointerup',
+      this.handlePointerUp,
+    );
+
+    canvas.addEventListener(
+      'pointercancel',
+      this.handlePointerUp,
+    );
+
+    canvas.addEventListener(
+      'wheel',
+      this.handleWheel,
+      { passive: false },
+    );
+
+    window.addEventListener(
+      'keydown',
+      this.handleKeyDown,
+    );
   }
 
-  protected stopDrawLoop(): void {
-    window.cancelAnimationFrame(this.raf);
+  protected stopDrawLoop() {
+    cancelAnimationFrame(
+      this.raf,
+    );
+
     this.frameTracker?.stop();
+
+    this.canvas.removeEventListener(
+      'pointerdown',
+      this.handlePointerDown,
+    );
+
+    this.canvas.removeEventListener(
+      'pointermove',
+      this.handlePointerMove,
+    );
+
+    this.canvas.removeEventListener(
+      'pointerup',
+      this.handlePointerUp,
+    );
+
+    this.canvas.removeEventListener(
+      'pointercancel',
+      this.handlePointerUp,
+    );
+
+    this.canvas.removeEventListener(
+      'wheel',
+      this.handleWheel,
+    );
+
+    window.removeEventListener(
+      'keydown',
+      this.handleKeyDown,
+    );
   }
 
-  private handlePointerDown = (event: PointerEvent): void => {
+  private handlePointerDown = (
+    event: PointerEvent,
+  ) => {
     if (event.button !== 0) {
       return;
     }
 
-  if (this.hasInteracted) {
-    this.canvas.style.cursor = 'none';
-  } else {
-    this.canvas.style.cursor = 'grabbing';
-  }
-
     this.dragging = true;
+
     this.lastX = event.clientX;
     this.lastY = event.clientY;
 
-    this.canvas.style.cursor = 'grabbing';
-    this.canvas.setPointerCapture(event.pointerId);
+    this.canvas.style.cursor =
+      'grabbing';
+
+    this.canvas.setPointerCapture(
+      event.pointerId,
+    );
   };
 
-  private handlePointerMove = (event: PointerEvent): void => {
+  private handlePointerMove = (
+    event: PointerEvent,
+  ) => {
     if (!this.dragging) {
       return;
     }
 
-  if (event.buttons !== 0) {
-    this.hasInteracted = true;
-    this.canvas.style.cursor = 'none';
-  }
+    const dx =
+      event.clientX - this.lastX;
 
-if (!this.hasInteracted && event.buttons !== 0) {
-  this.hasInteracted = true;
-  this.canvas.style.cursor = 'none';
-}
-
-
-    const dx = event.clientX - this.lastX;
-    const dy = event.clientY - this.lastY;
+    const dy =
+      event.clientY - this.lastY;
 
     this.lastX = event.clientX;
     this.lastY = event.clientY;
 
-    const sensitivity = 0.005;
+    this.yaw += dx * 0.005;
+    this.pitch += dy * 0.005;
 
-    this.yaw += dx * sensitivity;
-    this.pitch += dy * sensitivity;
+    const limit =
+      Math.PI / 2 - 0.01;
 
-    const limit = Math.PI / 2 - 0.01;
-
-    this.pitch = Math.max(-limit, Math.min(limit, this.pitch));
+    this.pitch = Math.max(
+      -limit,
+      Math.min(limit, this.pitch),
+    );
   };
 
-  private handlePointerUp = (event: PointerEvent): void => {
+  private handlePointerUp = (
+    event: PointerEvent,
+  ) => {
     this.dragging = false;
-    this.canvas.style.cursor = this.hasInteracted ? 'none' : 'grab';
 
-    if (this.canvas.hasPointerCapture(event.pointerId)) {
-      this.canvas.releasePointerCapture(event.pointerId);
+    this.canvas.style.cursor =
+      'grab';
+
+    if (
+      this.canvas.hasPointerCapture(
+        event.pointerId,
+      )
+    ) {
+      this.canvas.releasePointerCapture(
+        event.pointerId,
+      );
     }
   };
 
-private handleWheel = (event: WheelEvent): void => {
-  event.preventDefault();
+  private handleWheel = (
+    event: WheelEvent,
+  ) => {
+    event.preventDefault();
 
-  const zoomSpeed = 0.0015;
+    this.fov +=
+      event.deltaY * 0.0015;
 
-  this.fov += event.deltaY * zoomSpeed;
+    this.fov = Math.max(
+      Math.PI / 6,
+      Math.min(
+        Math.PI * 0.85,
+        this.fov,
+      ),
+    );
+  };
 
-  const minFov = Math.PI / 6;
-  const maxFov = Math.PI * 0.85;
-
-  this.fov = Math.max(minFov, Math.min(maxFov, this.fov));
-};
-
-
-  private handleKeyDown = (event: KeyboardEvent): void => {
-    if (event.key.toLowerCase() === 'r') {
+  private handleKeyDown = (
+    event: KeyboardEvent,
+  ) => {
+    if (
+      event.key.toLowerCase() === 'r'
+    ) {
       this.yaw = 0;
       this.pitch = 0;
       this.fov = Math.PI / 2;
     }
-
   };
 
-  protected async startDrawLoop(): Promise<void> {
-	  console.log('Video:', this.video.videoWidth, 'x', this.video.videoHeight);
-console.log('Canvas:', this.canvas.width, 'x', this.canvas.height);
-console.log('Canvas CSS:', this.canvas.clientWidth, 'x', this.canvas.clientHeight);
-console.log('Pixel ratio:', this.regl._gl.drawingBufferWidth, 'x', this.regl._gl.drawingBufferHeight);
+  protected async startDrawLoop() {
+    const textureProps:
+      Texture2DOptions = {
+        data: this.video,
+        flipY: true,
+      };
 
-    const textureProps: Texture2DOptions = {
-      data: this.video,
-      flipY: true,
-    };
+    const texture =
+      this.regl.texture(
+        textureProps,
+      );
 
-    const texture = this.regl.texture(textureProps);
+    this.frameTracker =
+      new VideoFrameTracker(
+        this.video,
+      );
 
-    this.frameTracker = new VideoFrameTracker(this.video);
-    const { frameTracker } = this;
+    const inverseModel =
+      this.getInverseModelMatrix(
+        this.video,
+      );
 
-    const inverseModel = this.getInverseModelMatrix(this.video);
+    const offsets =
+      this.getTexCoordScaleOffsets();
 
-
-
-
-    const tempEye = vec4.fromValues(0, 0, 0, 1);
-    vec4.transformMat4(tempEye, tempEye, inverseModel);
-
-    const modelSpaceEye = new Float32Array(
-      (tempEye as Float32Array).buffer,
-      0,
-      3,
-    );
-
-    const offsets = this.getTexCoordScaleOffsets();
-    const offset = this.eye === 'left' ? offsets[0] : offsets[1];
+    const offset =
+      this.eye === 'left'
+        ? offsets[0]
+        : offsets[1];
 
     const drawLoop = () => {
-		const now = performance.now();
-this.fpsFrames++;
-
-if (now - this.fpsLastTime >= 500) {
-  this.fps = Math.round(
-    (this.fpsFrames * 1000) / (now - this.fpsLastTime),
-  );
-
-  this.fpsFrames = 0;
-  this.fpsLastTime = now;
-
-  console.log(`FPS: ${this.fps}`);
-}
-
       this.regl.clear({
         color: [0, 0, 0, 1],
         depth: 1,
       });
 
-const projection = mat4.perspective(
-  mat4.create(),
-  this.fov,
-  this.canvas.width / this.canvas.height,
-  0.01,
-  100,
-);
-
-
-      if (frameTracker.consumeFrame()) {
-        texture.subimage(textureProps);
+      if (
+        this.frameTracker?.consumeFrame()
+      ) {
+        texture.subimage(
+          textureProps,
+        );
       }
 
-      /*
-       * Build the camera view every frame.
-       *
-       * yaw   = looking left/right
-       * pitch = looking up/down
-       */
-      const direction = vec4.fromValues(0, 0, -1, 0);
+      const projection =
+        mat4.perspective(
+          mat4.create(),
+          this.fov,
+          this.canvas.width /
+            Math.max(
+              this.canvas.height,
+              1,
+            ),
+          0.01,
+          100,
+        );
 
-      const rotation = mat4.create();
+      const direction =
+        vec4.fromValues(
+          0,
+          0,
+          -1,
+          0,
+        );
 
-      mat4.rotateY(rotation, rotation, this.yaw);
-      mat4.rotateX(rotation, rotation, this.pitch);
+      const rotation =
+        mat4.create();
 
-      vec4.transformMat4(direction, direction, rotation);
-
-      const target = [
-        direction[0],
-        direction[1],
-        direction[2],
-      ] as [number, number, number];
-
-      const view = mat4.lookAt(
-        mat4.create(),
-        [0, 0, 0],
-        target,
-        [0, 1, 0],
+      mat4.rotateY(
+        rotation,
+        rotation,
+        this.yaw,
       );
 
-      const vp = mat4.create();
-      mat4.multiply(vp, projection, view);
+      mat4.rotateX(
+        rotation,
+        rotation,
+        this.pitch,
+      );
 
-      const ivp = mat4.create();
-      mat4.invert(ivp, vp);
+      vec4.transformMat4(
+        direction,
+        direction,
+        rotation,
+      );
 
-      const imvp = mat4.create();
-      mat4.multiply(imvp, inverseModel, ivp);
+      const view =
+        mat4.lookAt(
+          mat4.create(),
+          [0, 0, 0],
+          [
+            direction[0],
+            direction[1],
+            direction[2],
+          ],
+          [0, 1, 0],
+        );
+
+      const vp =
+        mat4.multiply(
+          mat4.create(),
+          projection,
+          view,
+        );
+
+	const inverseVP = mat4.create();
+
+	if (mat4.invert(inverseVP, vp) === null) {
+	  return;
+	}
+
+      const imvp =
+        mat4.multiply(
+          mat4.create(),
+          inverseModel,
+          inverseVP,
+        );
+
+      const tempEye =
+        vec4.fromValues(
+          0,
+          0,
+          0,
+          1,
+        );
+
+      vec4.transformMat4(
+        tempEye,
+        tempEye,
+        inverseModel,
+      );
+
+      const modelSpaceEye =
+        new Float32Array([
+          tempEye[0],
+          tempEye[1],
+          tempEye[2],
+        ]);
 
       const props: RenderProps = {
-        inverseModelViewProjection: imvp,
+        inverseModelViewProjection:
+          imvp,
+
         modelSpaceEye,
+
         texture,
+
         viewport: {
           x: 0,
           y: 0,
           width: this.canvas.width,
           height: this.canvas.height,
         },
+
         texCoordScaleOffset: offset,
       };
 
       this.cmdRender(props);
 
-      this.raf = window.requestAnimationFrame(drawLoop);
+      this.raf =
+        requestAnimationFrame(
+          drawLoop,
+        );
     };
 
-    this.raf = window.requestAnimationFrame(drawLoop);
-
-    return Promise.resolve();
+    this.raf =
+      requestAnimationFrame(
+        drawLoop,
+      );
   }
 }
