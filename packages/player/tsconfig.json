@@ -19,7 +19,8 @@
     "declaration": true,
     "sourceMap": true,
     "outDir": "./lib",
-  },
+	"types": ["@webgpu/types", "webxr"],
+	},
   "include": [
     "src"
   ]

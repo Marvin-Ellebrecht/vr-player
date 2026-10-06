@@ -1,5 +1,6 @@
 import { ArrowDownTrayIcon, XMarkIcon } from '@heroicons/react/24/solid';
 import { DebugPlayer } from 'components/DebugPlayer';
+import type { RenderBackend } from '@vr-player/player';
 import { Toaster, toast } from 'react-hot-toast';
 import { UI } from './ui/UI';
 import { VrPlayer } from 'components/VrPlayer';
@@ -35,6 +36,7 @@ const worker = wrap<VideoRecognitionWorker>(
 export function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const debugContainerRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -46,6 +48,8 @@ export function App() {
   const [debug, setDebug] = useAtom(debugAtom);
   const [autoPlay] = useAtom(autoPlayAtom);
   const [autoDetect] = useAtom(autoDetectAtom);
+  const [renderBackend, setRenderBackend] = useState<RenderBackend>('auto');
+  const handleRenderBackendChange = ( backend: RenderBackend,) => { setRenderBackend(backend);};
 
   const [videoUrl, setVideoUrl] = useAtom(videoUrlAtom);
 
@@ -699,23 +703,23 @@ const closeViewer = async () => {
         reverseOrder={false}
       />
 
-      {debug &&
-        videoRef.current &&
-        canvasRef.current &&
-        ready && (
-          <DebugPlayer
-            key={videoUrl}
-            video={videoRef.current}
-            canvas={canvasRef.current}
-            layout={layout}
-            flipLayout={flipLayout}
-            format={format}
-            autoPlay={autoPlay}
-          />
-        )}
+	{debug &&
+	  videoRef.current &&
+	  debugContainerRef.current &&
+	  ready && (
+		<DebugPlayer
+		  container={debugContainerRef.current}
+		  video={videoRef.current}
+		  layout={layout}
+		  flipLayout={flipLayout}
+		  format={format}
+		  autoPlay={autoPlay}
+		  renderBackend={renderBackend}
+		/>
+	  )}
+
 
       {videoRef.current &&
-        canvasRef.current &&
         ready &&
         xrSession && (
           <VrPlayer
@@ -735,6 +739,8 @@ const closeViewer = async () => {
           onSelectFolder={() => {
             chooseVideoFolder();
           }}
+		  renderBackend={renderBackend}
+		  onRenderBackendChange={setRenderBackend}
         />
       </div>
 
@@ -1045,10 +1051,10 @@ const closeViewer = async () => {
           }
         }}
       >
-        <canvas
-          ref={canvasRef}
-          className="w-full h-full"
-        />
+		<div
+		  ref={debugContainerRef}
+		  className="absolute inset-0 w-full h-full"
+		/>
 
         {/* DEBUG CONTROLS */}
 
