@@ -197,17 +197,12 @@ export function UI({
     }}
     className="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-white hover:bg-gray-600"
   >
-    <option value="auto">
-      Auto
-    </option>
 
     <option value="webgl1">
-      WebGL 1
+      WebGL
     </option>
 
-    <option value="webgl2">
-      WebGL 2
-    </option>
+
 
     <option
       value="webgpu"

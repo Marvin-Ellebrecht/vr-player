@@ -180,9 +180,8 @@ fn fragmentMain(
 
     uv =
       vec2<f32>(
-        1.0 -
-          (planeHit.x * 0.5 + 0.5),
-        planeHit.y * 0.5 + 0.5
+        1.0 -(planeHit.x * 0.5 + 0.5),
+        0.5 - planeHit.y * 0.5
       );
   }
 
@@ -564,18 +563,21 @@ export class WebGPUDebugRenderer {
     this.render();
   }
 
-  private render = () => {
+private render = () => {
+  // Keep the render loop alive even if this frame fails.
+  this.raf = requestAnimationFrame(this.render);
+
+  try {
     this.resizeCanvas();
 
+    // Wait until seeking has finished and a decoded frame is available.
     if (
-      this.canvas.width <= 0 ||
-      this.canvas.height <= 0
+      this.video.seeking ||
+      this.video.readyState <
+        HTMLMediaElement.HAVE_CURRENT_DATA ||
+      this.video.videoWidth === 0 ||
+      this.video.videoHeight === 0
     ) {
-      this.raf =
-        requestAnimationFrame(
-          this.render,
-        );
-
       return;
     }
 
@@ -817,12 +819,10 @@ export class WebGPUDebugRenderer {
     this.device.queue.submit([
       commandEncoder.finish(),
     ]);
-
-    this.raf =
-      requestAnimationFrame(
-        this.render,
-      );
-  };
+} catch (error) {
+    console.error('WebGPU render error:', error);
+  }
+};
 
   private getModelMatrix() {
     const aspectRatio =

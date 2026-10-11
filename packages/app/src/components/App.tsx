@@ -48,8 +48,7 @@ export function App() {
   const [debug, setDebug] = useAtom(debugAtom);
   const [autoPlay] = useAtom(autoPlayAtom);
   const [autoDetect] = useAtom(autoDetectAtom);
-  const [renderBackend, setRenderBackend] = useState<RenderBackend>('auto');
-  const handleRenderBackendChange = ( backend: RenderBackend,) => { setRenderBackend(backend);};
+  const [renderBackend, setRenderBackend] =  useState<RenderBackend>('webgpu');
 
   const [videoUrl, setVideoUrl] = useAtom(videoUrlAtom);
 
@@ -442,19 +441,7 @@ const closeViewer = async () => {
 
       setGalleryThumbnails(thumbnails);
 
-      /*
-       * Load the first video immediately.
-       *
-       * You can remove this if selecting a folder
-       * should NOT automatically load the first video.
-       */
-      if (files.length > 0) {
-        const firstUrl = urls[files[0].name];
 
-        if (firstUrl) {
-          loadVideo(firstUrl);
-        }
-      }
     };
 
     input.click();
@@ -692,6 +679,9 @@ const closeViewer = async () => {
    * RENDER
    * ---------------------------------------------------------
    */
+   
+  
+
 
   return (
     <div

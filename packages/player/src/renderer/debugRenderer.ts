@@ -18,10 +18,7 @@ export class DebugRenderer {
     | WebGPUDebugRenderer
     | null = null;
 
-  private readonly backend: Exclude<
-    RenderBackend,
-    'auto'
-  >;
+  private readonly backend: RenderBackend;
 
   constructor(
     private readonly video: HTMLVideoElement,
@@ -30,61 +27,53 @@ export class DebugRenderer {
     private readonly flipLayout: boolean,
     private readonly format: Format,
     private readonly eye: 'left' | 'right',
-    requestedBackend: RenderBackend = 'auto',
+    requestedBackend: RenderBackend,
   ) {
-    this.backend =
-      resolveRenderBackend(
-        requestedBackend,
-        canvas,
-      );
-  }
+    this.backend = resolveRenderBackend(
+      requestedBackend,
+      canvas,
+    );
+  } 
 
   async start(): Promise<void> {
     if (this.backend === 'webgpu') {
-      const renderer =
-        new WebGPUDebugRenderer(
-          this.video,
-          this.canvas,
-          this.layout,
-          this.flipLayout,
-          this.format,
-          this.eye,
-        );
-
-      this.renderer = renderer;
-
-      await renderer.start();
-
-      return;
-    }
-
-    const renderer =
-      new WebGLDebugRenderer(
+      const renderer = new WebGPUDebugRenderer(
         this.video,
         this.canvas,
         this.layout,
         this.flipLayout,
         this.format,
         this.eye,
-        this.backend === 'webgl2'
-          ? 2
-          : 1,
       );
 
-    this.renderer = renderer;
+      this.renderer = renderer;
+      await renderer.start();
+      return;
+    }
 
+    const renderer = new WebGLDebugRenderer(
+      this.video,
+      this.canvas,
+      this.layout,
+      this.flipLayout,
+      this.format,
+      this.eye,
+    );
+
+    this.renderer = renderer;
     await renderer.start();
   }
 
-  stop() {
+  stop(): void {
     this.renderer?.stop();
     this.renderer = null;
   }
 
-  getBackend() {
+  getBackend(): RenderBackend {
     return this.backend;
   }
 }
+
 
 class WebGLDebugRenderer extends Renderer {
   private raf = 0;
@@ -108,14 +97,12 @@ class WebGLDebugRenderer extends Renderer {
     flipLayout: boolean,
     format: Format,
     private readonly eye: 'left' | 'right',
-    webglVersion: 1 | 2,
   ) {
     super(
       canvas,
       layout,
       flipLayout,
       format,
-      webglVersion,
     );
 
     canvas.style.cursor = 'grab';

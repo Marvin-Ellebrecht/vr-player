@@ -14,7 +14,7 @@ export function DebugPlayer({
   format,
   autoPlay,
   view = 'left',
-  renderBackend = 'auto',
+  renderBackend = 'webgpu',
 }: {
   container: HTMLDivElement;
   video: HTMLVideoElement;
@@ -28,78 +28,123 @@ export function DebugPlayer({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    /*
-     * IMPORTANT:
-     *
-     * A canvas cannot change from WebGL -> WebGPU -> WebGL.
-     *
-     * Therefore every renderer gets a completely new canvas.
-     */
-
-    const canvas = document.createElement('canvas');
-
-    canvas.className = 'w-full h-full';
-
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.display = 'block';
-
-    container.replaceChildren(canvas);
-
-    canvasRef.current = canvas;
-
-    let renderer: DebugRenderer | null = null;
     let stopped = false;
+    let renderer: DebugRenderer | null = null;
+    let activeCanvas: HTMLCanvasElement | null = null;
 
-    const start = async () => {
-      const newRenderer = new DebugRenderer(
+    const startRenderer = async (
+      backend: RenderBackend,
+    ): Promise<boolean> => {
+      if (stopped) return false;
+	  
+
+      // Never reuse a canvas across rendering backends.
+      const canvas = document.createElement('canvas');
+      canvas.className = 'w-full h-full';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.display = 'block';
+
+      container.replaceChildren(canvas);
+      activeCanvas = canvas;
+      canvasRef.current = canvas;
+
+      const instance = new DebugRenderer(
         video,
         canvas,
         layout,
         flipLayout,
         format,
         view,
-        renderBackend,
+        backend,
       );
 
-      renderer = newRenderer;
+      renderer = instance;
 
       try {
-        await newRenderer.start();
+        console.info(`[DebugPlayer] Starting ${backend}...`);
 
-        /*
-         * React may already have cleaned this renderer up
-         * while the async WebGPU startup was still running.
-         */
+        await instance.start();
+
         if (stopped) {
-          newRenderer.stop();
-          return;
+          instance.stop();
+          return false;
         }
 
-        if (autoPlay) {
-          await video.play().catch((error) => {
-            console.warn(
-              'Debug player autoplay failed:',
-              error,
-            );
-          });
-        }
+        console.info(`[DebugPlayer] ${backend} started successfully.`);
+        return true;
       } catch (error) {
-        if (!stopped) {
-          console.error(
-            `Failed to start ${renderBackend} renderer:`,
-            error,
-          );
-        }
+        console.error(
+          `[DebugPlayer] ${backend} failed to initialize:`,
+          error,
+        );
 
         try {
-          newRenderer.stop();
-        } catch {
-          // Renderer may not have finished initializing.
+          instance.stop();
+        } catch (stopError) {
+          console.warn('[DebugPlayer] Renderer cleanup failed:', stopError);
         }
 
-        if (renderer === newRenderer) {
+        if (renderer === instance) {
           renderer = null;
+        }
+
+        if (canvas.parentNode === container) {
+          canvas.remove();
+        }
+
+        if (canvasRef.current === canvas) {
+          canvasRef.current = null;
+        }
+
+        if (activeCanvas === canvas) {
+          activeCanvas = null;
+        }
+
+        return false;
+      }
+    };
+
+    const start = async () => {
+      // Attempt the requested backend first.
+      let backend: RenderBackend = renderBackend === 'auto'  ? 'webgpu' : renderBackend;
+      let success = await startRenderer(backend);
+
+      if (stopped) return;
+
+      if (!success) {
+        // Retry using the opposite backend and a new canvas.
+        const fallbackBackend: RenderBackend =
+          backend === 'webgpu' ? 'webgl1' : 'webgpu';
+
+        console.warn(
+          `[DebugPlayer] ${backend} failed; trying ${fallbackBackend}.`,
+        );
+
+        backend = fallbackBackend;
+        success = await startRenderer(backend);
+      }
+
+      if (stopped) return;
+
+      if (!success) {
+        console.error(
+          '[DebugPlayer] Both WebGPU and WebGL failed.',
+        );
+
+        window.alert(
+          'Rendering failed. Both WebGPU and WebGL are unavailable or failed to initialize. Try a supported browser or update your graphics drivers.',
+        );
+        return;
+      }
+
+      if (autoPlay) {
+        try {
+          await video.play();
+        } catch (error) {
+          if (!stopped) {
+            console.warn('[DebugPlayer] Autoplay failed:', error);
+          }
         }
       }
     };
@@ -110,33 +155,25 @@ export function DebugPlayer({
       stopped = true;
 
       const oldRenderer = renderer;
-
       renderer = null;
 
       if (oldRenderer) {
         try {
           oldRenderer.stop();
         } catch (error) {
-          console.warn(
-            'Failed to stop debug renderer:',
-            error,
-          );
+          console.warn('[DebugPlayer] Failed to stop renderer:', error);
         }
       }
 
-      /*
-       * Remove the canvas completely.
-       *
-       * This is critical. The old canvas may have a WebGL
-       * or WebGPU context permanently associated with it.
-       */
-      if (canvas.parentNode === container) {
-        canvas.remove();
+      if (activeCanvas?.parentNode === container) {
+        activeCanvas.remove();
       }
 
-      if (canvasRef.current === canvas) {
+      if (canvasRef.current === activeCanvas) {
         canvasRef.current = null;
       }
+
+      activeCanvas = null;
     };
   }, [
     autoPlay,

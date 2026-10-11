@@ -1,8 +1,4 @@
-export type RenderBackend =
-  | 'auto'
-  | 'webgl1'
-  | 'webgl2'
-  | 'webgpu';
+export type RenderBackend = 'webgpu' | 'webgl1';
 
 export function isWebGPUSupported(): boolean {
   return (
@@ -11,25 +7,11 @@ export function isWebGPUSupported(): boolean {
   );
 }
 
-export function isWebGL2Supported(
-  canvas: HTMLCanvasElement,
-): boolean {
-  try {
-    return Boolean(
-      canvas.getContext('webgl2'),
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function isWebGL1Supported(
   canvas: HTMLCanvasElement,
 ): boolean {
   try {
-    return Boolean(
-      canvas.getContext('webgl'),
-    );
+    return Boolean(canvas.getContext('webgl'));
   } catch {
     return false;
   }
@@ -38,44 +20,28 @@ export function isWebGL1Supported(
 export function resolveRenderBackend(
   requested: RenderBackend,
   canvas: HTMLCanvasElement,
-): Exclude<RenderBackend, 'auto'> {
-  if (
-    requested === 'webgpu' &&
-    isWebGPUSupported()
-  ) {
-    return 'webgpu';
+): RenderBackend {
+  if (requested === 'webgpu') {
+    if (isWebGPUSupported()) {
+      return 'webgpu';
+    }
+
+    if (isWebGL1Supported(canvas)) {
+      return 'webgl1';
+    }
   }
 
-  if (
-    requested === 'webgl2' &&
-    isWebGL2Supported(canvas)
-  ) {
-    return 'webgl2';
-  }
+  if (requested === 'webgl1') {
+    if (isWebGL1Supported(canvas)) {
+      return 'webgl1';
+    }
 
-  if (
-    requested === 'webgl1' &&
-    isWebGL1Supported(canvas)
-  ) {
-    return 'webgl1';
-  }
-
-  if (
-    requested === 'auto' &&
-    isWebGPUSupported()
-  ) {
-    return 'webgpu';
-  }
-
-  if (isWebGL2Supported(canvas)) {
-    return 'webgl2';
-  }
-
-  if (isWebGL1Supported(canvas)) {
-    return 'webgl1';
+    if (isWebGPUSupported()) {
+      return 'webgpu';
+    }
   }
 
   throw new Error(
-    'No supported renderer was found.',
+    'Neither WebGPU nor WebGL 1 is available.',
   );
 }
