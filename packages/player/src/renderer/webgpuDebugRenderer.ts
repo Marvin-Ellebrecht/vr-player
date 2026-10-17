@@ -10,6 +10,7 @@ struct Uniforms {
   modelSpaceEye: vec3<f32>,
   _padding0: f32,
   texCoordScaleOffset: vec4<f32>,
+  cameraToModelRotation: mat4x4<f32>,
 };
 
 @group(0) @binding(0)
@@ -104,72 +105,95 @@ fn sphereUV(
   );
 }
 
+
 @fragment
 fn fragmentMain(
   input: VertexOutput,
 ) -> @location(0) vec4<f32> {
-  let origin =
-    uniforms.modelSpaceEye;
+  let origin = uniforms.modelSpaceEye;
+  let direction = getRay(input.clipCoord);
 
-  let direction =
-    getRay(
-      input.clipCoord,
-    );
-
-  let halfB =
-    dot(origin, direction);
-
-  let c =
-    dot(origin, origin) - 1.0;
-
-  let discriminant =
-    halfB * halfB - c;
+  /*
+   * Intersect the viewing ray with the sphere.
+   */
+  let halfB = dot(origin, direction);
+  let c = dot(origin, origin) - 1.0;
+  let discriminant = halfB * halfB - c;
 
   if (discriminant < 0.0) {
     discard;
   }
 
-  let t =
-    -halfB + sqrt(discriminant);
+  let t = -halfB + sqrt(discriminant);
+  let hit = origin + t * direction;
 
-  let hit =
-    origin + t * direction;
-
-  var uv =
-    sphereUV(hit);
+  var uv: vec2<f32>;
 
   /*
-   * 180 degree video.
+   * Fisheye video input.
+   * FORMAT == 3: equidistant 180-degree fisheye.
    */
-  if (FORMAT == 1) {
-    if (
-      uv.x < 0.25 ||
-      uv.x > 0.75
-    ) {
+  if (FORMAT == 3) {
+    var p = normalize(hit);
+
+    // Correct viewing orientation.
+    p = vec3<f32>(
+      -p.z,
+       p.y,
+       p.x
+    );
+
+    // Angle from the fisheye optical axis.
+    let theta = acos(
+      clamp(p.z, -1.0, 1.0)
+    );
+
+    // Azimuth around the optical axis.
+    let phi = atan2(p.y, p.x);
+
+    // Map 180 degrees to the fisheye image radius.
+    let radius = theta / 1.57079632679;
+
+    // Discard pixels outside the fisheye circle.
+    if (radius > 1.0) {
       discard;
     }
 
-    uv.x =
-      (uv.x - 0.25) * 2.0;
+    // Horizontal flip fixes the mirrored image.
+    uv = vec2<f32>(
+      0.5 - radius * cos(phi) * 0.5,
+      0.5 - radius * sin(phi) * 0.5
+    );
+  } else {
+    uv = sphereUV(hit);
   }
 
   /*
-   * Flat screen video.
+   * Existing 180-degree equirectangular video.
+   */
+  if (FORMAT == 1) {
+    if (uv.x < 0.25 || uv.x > 0.75) {
+      discard;
+    }
+
+    uv.x = (uv.x - 0.25) * 2.0;
+  }
+
+  /*
+   * Existing flat-screen video.
    */
   if (FORMAT == 2) {
     if (abs(direction.z) < 0.00001) {
       discard;
     }
 
-    let planeT =
-      -origin.z / direction.z;
+    let planeT = -origin.z / direction.z;
 
     if (planeT < 0.0) {
       discard;
     }
 
-    let planeHit =
-      origin + planeT * direction;
+    let planeHit = origin + planeT * direction;
 
     if (
       abs(planeHit.x) > 1.0 ||
@@ -178,22 +202,17 @@ fn fragmentMain(
       discard;
     }
 
-    uv =
-      vec2<f32>(
-        1.0 -(planeHit.x * 0.5 + 0.5),
-        0.5 - planeHit.y * 0.5
-      );
+    uv = vec2<f32>(
+      1.0 - (planeHit.x * 0.5 + 0.5),
+      0.5 - planeHit.y * 0.5
+    );
   }
 
   /*
-   * Do not flip Y here.
-   *
-   * WebGPU's external video texture already has
-   * browser/video coordinate handling applied.
+   * Preserve stereo layout mapping.
    */
   let mappedUV =
-    uv *
-      uniforms.texCoordScaleOffset.xy +
+    uv * uniforms.texCoordScaleOffset.xy +
     uniforms.texCoordScaleOffset.zw;
 
   return textureSampleBaseClampToEdge(
@@ -204,10 +223,14 @@ fn fragmentMain(
 }
 `;
 
+
 function formatDefine(
   format: Format,
 ): string {
   switch (format) {
+	case 'fisheye':
+       return 'const FORMAT: i32 = 3;';
+	   
     case '360':
       return 'const FORMAT: i32 = 0;';
 
@@ -516,7 +539,7 @@ export class WebGPUDebugRenderer {
 
     this.uniformBuffer =
       this.device.createBuffer({
-        size: 128,
+        size: 192,
         usage:
           GPUBufferUsage.UNIFORM |
           GPUBufferUsage.COPY_DST,

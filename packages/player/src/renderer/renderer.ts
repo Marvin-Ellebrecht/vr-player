@@ -58,6 +58,62 @@ void getRay(out vec3 rayOrigin, out vec3 rayDir) {
   rayDir = normalize(farModel.xyz - nearModel.xyz);
 }
 `;
+const FRAG_FISHEYE_WEBGL1 =
+  RAY_PREAMBLE_WEBGL1 +
+  `
+void main() {
+  vec3 rayOrigin;
+  vec3 rayDir;
+
+  getRay(rayOrigin, rayDir);
+
+  float halfB = dot(rayOrigin, rayDir);
+  float c =
+    dot(rayOrigin, rayOrigin) -
+    SPHERE_RADIUS * SPHERE_RADIUS;
+
+  float discriminant = halfB * halfB - c;
+
+  if (discriminant < 0.0) {
+    discard;
+  }
+
+  float t = -halfB + sqrt(discriminant);
+  vec3 hit = rayOrigin + t * rayDir;
+
+  vec3 p = normalize(hit);
+  // Rotate the viewing direction 90 degrees to the left.
+p = vec3(-p.z, p.y, p.x);
+
+  // Angle from the fisheye optical axis (+Z).
+  float theta = acos(clamp(p.z, -1.0, 1.0));
+
+  // Azimuth around the optical axis.
+  float phi = atan(p.y, p.x);
+
+  // Equidistant fisheye projection.
+  // A 180-degree FOV maps theta = PI / 2 to the image edge.
+  float radius = theta / (PI * 0.5);
+
+vec2 fisheyeUv = vec2(
+  0.5 - radius * cos(phi) * 0.5,
+  0.5 + radius * sin(phi) * 0.5
+);
+
+  // Discard rays outside the 180-degree fisheye circle.
+  vec2 centered = fisheyeUv - vec2(0.5);
+
+  if (dot(centered, centered) > 0.25) {
+    discard;
+  }
+
+  vec2 mappedUv =
+    fisheyeUv * texCoordScaleOffset.xy +
+    texCoordScaleOffset.zw;
+
+  gl_FragColor = texture2D(texture, mappedUv);
+}
+`;
 
 const FRAG_360_WEBGL1 =
   RAY_PREAMBLE_WEBGL1 +
@@ -190,183 +246,8 @@ void main() {
 }
 `;
 
-const VERT_SHADER_WEBGL2 = `#version 300 es
-precision highp float;
 
-in vec3 position;
 
-out vec2 clipCoord;
-
-void main() {
-  clipCoord = position.xy;
-  gl_Position = vec4(position.xy, 0.0, 1.0);
-}
-`;
-
-const RAY_PREAMBLE_WEBGL2 = `#version 300 es
-precision highp float;
-
-#define PI 3.14159265359
-#define TWO_PI 6.28318530718
-#define SPHERE_RADIUS 1.0
-
-uniform mat4 inverseModelViewProjection;
-uniform vec3 modelSpaceEye;
-uniform sampler2D texture;
-uniform mediump vec4 texCoordScaleOffset;
-
-in vec2 clipCoord;
-
-void getRay(out vec3 rayOrigin, out vec3 rayDir) {
-  rayOrigin = modelSpaceEye;
-
-  vec4 nearModel =
-    inverseModelViewProjection * vec4(clipCoord, -1.0, 1.0);
-
-  vec4 farModel =
-    inverseModelViewProjection * vec4(clipCoord, 1.0, 1.0);
-
-  nearModel /= nearModel.w;
-  farModel /= farModel.w;
-
-  rayDir = normalize(farModel.xyz - nearModel.xyz);
-}
-`;
-
-const FRAG_360_WEBGL2 =
-  RAY_PREAMBLE_WEBGL2 +
-  `
-out vec4 outColor;
-
-void main() {
-  vec3 rayOrigin;
-  vec3 rayDir;
-
-  getRay(rayOrigin, rayDir);
-
-  float halfB = dot(rayOrigin, rayDir);
-  float c =
-    dot(rayOrigin, rayOrigin) -
-    SPHERE_RADIUS * SPHERE_RADIUS;
-
-  float discriminant = halfB * halfB - c;
-
-  if (discriminant < 0.0) {
-    discard;
-  }
-
-  float t = -halfB + sqrt(discriminant);
-  vec3 hit = rayOrigin + t * rayDir;
-
-  float theta = atan(hit.z, hit.x);
-  float phi = asin(
-    clamp(hit.y / SPHERE_RADIUS, -1.0, 1.0)
-  );
-
-  vec2 uv = vec2(
-    theta / TWO_PI + 0.5,
-    phi / PI + 0.5
-  );
-
-  vec2 mappedUv =
-    uv * texCoordScaleOffset.xy +
-    texCoordScaleOffset.zw;
-
-  outColor = texture(texture, mappedUv);
-}
-`;
-
-const FRAG_180_WEBGL2 =
-  RAY_PREAMBLE_WEBGL2 +
-  `
-out vec4 outColor;
-
-void main() {
-  vec3 rayOrigin;
-  vec3 rayDir;
-
-  getRay(rayOrigin, rayDir);
-
-  float halfB = dot(rayOrigin, rayDir);
-  float c =
-    dot(rayOrigin, rayOrigin) -
-    SPHERE_RADIUS * SPHERE_RADIUS;
-
-  float discriminant = halfB * halfB - c;
-
-  if (discriminant < 0.0) {
-    discard;
-  }
-
-  float t = -halfB + sqrt(discriminant);
-  vec3 hit = rayOrigin + t * rayDir;
-
-  float theta = atan(hit.z, hit.x);
-  float phi = asin(
-    clamp(hit.y / SPHERE_RADIUS, -1.0, 1.0)
-  );
-
-  vec2 uv = vec2(
-    theta / TWO_PI + 0.5,
-    phi / PI + 0.5
-  );
-
-  if (uv.x < 0.25 || uv.x > 0.75) {
-    discard;
-  }
-
-  uv.x = (uv.x - 0.25) * 2.0;
-
-  vec2 mappedUv =
-    uv * texCoordScaleOffset.xy +
-    texCoordScaleOffset.zw;
-
-  outColor = texture(texture, mappedUv);
-}
-`;
-
-const FRAG_SCREEN_WEBGL2 =
-  RAY_PREAMBLE_WEBGL2 +
-  `
-out vec4 outColor;
-
-void main() {
-  vec3 rayOrigin;
-  vec3 rayDir;
-
-  getRay(rayOrigin, rayDir);
-
-  if (abs(rayDir.z) < 0.00001) {
-    discard;
-  }
-
-  float t = -rayOrigin.z / rayDir.z;
-
-  if (t < 0.0) {
-    discard;
-  }
-
-  vec3 hit = rayOrigin + t * rayDir;
-
-  if (
-    abs(hit.x) > 1.0 ||
-    abs(hit.y) > 1.0
-  ) {
-    discard;
-  }
-
-  vec2 uv = vec2(
-    1.0 - (hit.x * 0.5 + 0.5),
-    hit.y * 0.5 + 0.5
-  );
-
-  vec2 mappedUv =
-    uv * texCoordScaleOffset.xy +
-    texCoordScaleOffset.zw;
-
-  outColor = texture(texture, mappedUv);
-}
-`;
 
 export type WebGLVersion = 1 | 2;
 
@@ -374,19 +255,10 @@ function getFragShader(
   format: Format,
   version: WebGLVersion,
 ): string {
-  if (version === 2) {
-    switch (format) {
-      case '360':
-        return FRAG_360_WEBGL2;
-      case '180':
-        return FRAG_180_WEBGL2;
-      case 'screen':
-      default:
-        return FRAG_SCREEN_WEBGL2;
-    }
-  }
 
   switch (format) {
+	case 'fisheye':
+      return FRAG_FISHEYE_WEBGL1;
     case '360':
       return FRAG_360_WEBGL1;
     case '180':
@@ -460,6 +332,7 @@ export abstract class Renderer {
   ) {
     this.webglVersion = webglVersion;
 
+
 const dpr = Math.min(
   window.devicePixelRatio || 1,
   2,
@@ -519,9 +392,7 @@ this.regl = reglInit({
 
     this.cmdRender = this.regl({
       vert:
-        webglVersion === 2
-          ? VERT_SHADER_WEBGL2
-          : VERT_SHADER_WEBGL1,
+        VERT_SHADER_WEBGL1,
 
       frag: getFragShader(
         this.format,

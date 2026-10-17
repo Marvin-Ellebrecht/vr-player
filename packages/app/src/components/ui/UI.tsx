@@ -177,6 +177,13 @@ export function UI({
   >
     360°
   </GroupControlElement>
+
+  <GroupControlElement
+    aria-current={format === 'fisheye'}
+    onClick={() => setFormat('fisheye')}
+  >
+    Fisheye
+  </GroupControlElement>
 </GroupControl>
 
 <div className="flex items-center m-2">
