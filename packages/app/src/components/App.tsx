@@ -87,6 +87,7 @@ export function App() {
   const [randomOrder, setRandomOrder] = useState<string[]>([]);  
   
   const normalizedSearch = gallerySearch.trim().toLocaleLowerCase();
+
   
 
 const visibleGalleryFiles = galleryFiles

@@ -15,6 +15,7 @@ import { useXRSession } from 'hooks/useXRSession';
 import clsx from 'clsx';
 import type { DropzoneInputProps } from 'react-dropzone';
 import type { RenderBackend } from '@vr-player/player';
+import { useState } from 'react';
 
 
 export function UI({
@@ -51,6 +52,7 @@ export function UI({
 
   const [xrSupported, xrSession, requestXrSession] = useXRSession();
   const webGpuSupported = typeof navigator !== 'undefined' && 'gpu' in navigator;
+  const [showVideoSettings, setShowVideoSettings] = useState(false);
 
   return (
     <div
@@ -102,35 +104,59 @@ export function UI({
 </button>
 	  
 
-      <Control aria-current={autoPlay} onClick={() => setAutoPlay(!autoPlay)}>
-        Autoplay
-      </Control>
+      
 	  
 
 
-      <div className="flex relative">
-        {detecting && (
-          <span className="absolute top-1 right-1 h-3 w-3" role="status">
-            <span className="sr-only">Loading...</span>
-            <span
-              role="presentation"
-              className="absolute h-full w-full rounded-full bg-white shadow-sm"
-            />
-            <span
-              role="presentation"
-              className="animate-ping absolute h-full w-full rounded-full bg-white"
-            />
-          </span>
-        )}
-        <Control
-          aria-current={autoDetect}
-          onClick={() => setAutoDetect(!autoDetect)}
-        >
-          Detect Video Settings
-        </Control>
-      </div>
+      <div className="flex items-center">
+  {detecting && (
+    <span
+      className="absolute ml-2 h-3 w-3"
+      role="status"
+    >
+      <span className="sr-only">Loading...</span>
+      <span className="absolute h-full w-full rounded-full bg-white shadow-sm" />
+      <span className="absolute h-full w-full animate-ping rounded-full bg-white" />
+    </span>
+  )}
 
-      <GroupControl>
+  <div className="flex items-stretch m-2">
+    <div className="[&>button]:!m-0 [&>button]:rounded-r-none">
+      <Control
+        aria-current={autoDetect}
+        onClick={() => setAutoDetect(!autoDetect)}
+      >
+        Detect Video Settings
+      </Control>
+    </div>
+
+    <button
+      type="button"
+      aria-label={
+        showVideoSettings
+          ? 'Collapse video settings'
+          : 'Expand video settings'
+      }
+      aria-expanded={showVideoSettings}
+      onClick={() =>
+        setShowVideoSettings((previous) => !previous)
+      }
+      className="rounded-r-lg border border-l-0 border-gray-600 bg-gray-700 px-3 text-sm font-bold text-white hover:bg-gray-600"
+    >
+      {showVideoSettings ? '<' : '>'}
+    </button>
+  </div>
+</div>
+
+{showVideoSettings && (
+  <div className="flex flex-wrap items-center rounded-md gap-0 m-0 p-0">       
+	
+	{<Control aria-current={autoPlay} onClick={() => setAutoPlay(!autoPlay)}>
+        Autoplay
+	</Control>}
+	
+	
+	{<GroupControl className="my-0">
         <GroupControlElement
           aria-current={layout === 'mono'}
           onClick={() => setLayout('mono')}
@@ -156,11 +182,8 @@ export function UI({
         >
           Flip
         </GroupControlElement>
-      </GroupControl>
-
-
-
-<GroupControl>
+      </GroupControl>}
+    {<GroupControl className="my-0">
   <GroupControlElement
     aria-current={format === 'screen'}
     onClick={() => setFormat('screen')}
@@ -188,9 +211,9 @@ export function UI({
   >
     Fisheye
   </GroupControlElement>
-</GroupControl>
+</GroupControl>}
 
-<div className="flex items-center m-2">
+    {<div className="flex items-center m-2 my-0">
   <label
     htmlFor="render-backend"
     className="mr-2 text-sm text-gray-300"
@@ -225,7 +248,17 @@ export function UI({
         : ''}
     </option>
   </select>
-</div>
+</div>}
+  </div>
+)}
+
+
+
+
+
+
+
+
 
 {gallerySelected && (
   <button
