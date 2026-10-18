@@ -23,14 +23,18 @@ export function UI({
   onSelectFolder,
   renderBackend,
   onRenderBackendChange,
+  showGallerySearch,
+  onToggleGallerySearch,
+  gallerySelected,
 }: {
   fileInputProps: DropzoneInputProps;
   onSelectFile: () => void;
   onSelectFolder: () => void;
   renderBackend: RenderBackend;
-  onRenderBackendChange: (
-    backend: RenderBackend,
-  ) => void;
+  onRenderBackendChange: (backend: RenderBackend) => void;
+  showGallerySearch: boolean;
+  onToggleGallerySearch: () => void;
+  gallerySelected: boolean;
 }) {
 
 
@@ -222,6 +226,20 @@ export function UI({
     </option>
   </select>
 </div>
+
+{gallerySelected && (
+  <button
+    type="button"
+    aria-label={
+      showGallerySearch ? 'Close gallery search' : 'Open gallery search'
+    }
+    aria-expanded={showGallerySearch}
+    onClick={onToggleGallerySearch}
+    className="cursor-pointer flex m-2 py-2 px-4 text-sm font-medium text-white bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg shadow-sm"
+  >
+    {showGallerySearch ? '✕' : '⌕'}
+  </button>
+)}
 
 
 <Control

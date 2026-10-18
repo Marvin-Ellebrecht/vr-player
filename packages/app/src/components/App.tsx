@@ -33,6 +33,17 @@ const worker = wrap<VideoRecognitionWorker>(
   ),
 );
 
+function shuffleFiles(files: File[]): string[] {
+  const names = files.map((file) => file.name);
+
+  for (let i = names.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [names[i], names[j]] = [names[j], names[i]];
+  }
+
+  return names;
+}
+
 export function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -58,6 +69,9 @@ export function App() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [showControls, setShowControls] = useState(true);
+  const [gallerySearch, setGallerySearch] = useState('');
+  const [gallerySort, setGallerySort] = useState<   | 'name-asc'  | 'name-desc'  | 'newest'  | 'oldest'  | 'longest'  | 'shortest'| 'random'>('name-asc');
+  const [galleryDurations, setGalleryDurations] = useState<Record<string, number>>({});
 
   const [, xrSession] = useXRSession();
   const setDetecting = useSetAtom(detectingAtom);
@@ -68,6 +82,81 @@ export function App() {
   const [urlInput, setUrlInput] = useState('');
   type VideoSource = 'file' | 'url' | 'gallery' | null;
   const [videoSource, setVideoSource] =  useState<VideoSource>(null);
+  const [showGallerySearch, setShowGallerySearch] = useState(false);
+  const toggleGallerySearch = () => {if (showGallerySearch) {setGallerySearch('');} setShowGallerySearch((previous) => !previous);};
+  const [randomOrder, setRandomOrder] = useState<string[]>([]);  
+  
+  const normalizedSearch = gallerySearch.trim().toLocaleLowerCase();
+  
+
+const visibleGalleryFiles = galleryFiles
+  .filter((file) =>
+    file.name.toLocaleLowerCase().includes(normalizedSearch),
+  )
+  .sort((a, b) => {
+    if (gallerySort === 'random') {
+      const aIndex = randomOrder.indexOf(a.name);
+      const bIndex = randomOrder.indexOf(b.name);
+
+      return aIndex - bIndex;
+    }
+
+    switch (gallerySort) {
+      case 'name-desc':
+        return b.name.localeCompare(a.name, undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        });
+
+      case 'newest':
+        return b.lastModified - a.lastModified;
+
+      case 'oldest':
+        return a.lastModified - b.lastModified;
+
+      case 'longest':
+        return (galleryDurations[b.name] ?? 0) -
+          (galleryDurations[a.name] ?? 0);
+
+      case 'shortest':
+        return (galleryDurations[a.name] ?? 0) -
+          (galleryDurations[b.name] ?? 0);
+
+      case 'name-asc':
+      default:
+        return a.name.localeCompare(b.name, undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        });
+    }
+  });
+	  
+	  const getVideoDuration = (file: File): Promise<number> =>
+  new Promise((resolve) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      video.removeAttribute('src');
+      video.load();
+    };
+
+    video.preload = 'metadata';
+
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+      cleanup();
+      resolve(Number.isFinite(duration) ? duration : 0);
+    };
+
+    video.onerror = () => {
+      cleanup();
+      resolve(0);
+    };
+
+    video.src = url;
+  });
 
 
   /*
@@ -355,6 +444,7 @@ const closeViewer = async () => {
     // Reset gallery and player state.
     setGalleryFiles([]);
     setGalleryUrls({});
+	setGalleryDurations({});
     setGalleryThumbnails({});
     setDebug(false);
     setReady(false);
@@ -421,6 +511,8 @@ const closeViewer = async () => {
 
       setGalleryFiles(files);
       setGalleryUrls(urls);
+	  const durationEntries = await Promise.all(files.map(async (file) => [file.name, await getVideoDuration(file),] as const),);
+	  setGalleryDurations(Object.fromEntries(durationEntries));
 
       /*
        * Generate thumbnails.
@@ -727,86 +819,131 @@ const closeViewer = async () => {
         <UI
           fileInputProps={getInputProps()}
           onSelectFile={handleSelectFile}
-          onSelectFolder={() => {
-            chooseVideoFolder();
-          }}
+          onSelectFolder={() => {chooseVideoFolder();}}
 		  renderBackend={renderBackend}
 		  onRenderBackendChange={setRenderBackend}
+		  showGallerySearch={showGallerySearch}
+		  onToggleGallerySearch={toggleGallerySearch}
+		  gallerySelected={galleryFiles.length > 0}
         />
       </div>
 
-      {/* -------------------------------------------------- */}
       {/* GALLERY */}
-      {/* -------------------------------------------------- */}
+{galleryFiles.length > 0 && (
+  <section className="p-4">
+  <div className="mb-4">
+  <div className="flex items-center gap-2">
+    {showGallerySearch && (
+      <>
+        <input
+          type="search"
+          autoFocus
+          value={gallerySearch}
+          onChange={(event) => setGallerySearch(event.target.value)}
+          placeholder="Search videos..."
+          aria-label="Search videos"
+          className="min-w-0 flex-1 rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-white placeholder-gray-400"
+        />
 
-      {galleryFiles.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-4">
-          {galleryFiles.map((file) => (
-            <button
-              key={file.name}
-              type="button"
-              className="text-left bg-gray-800 hover:bg-gray-700 rounded-lg overflow-hidden"
-              onClick={() => {
-                selectGalleryVideo(file);
-              }}
-              onDoubleClick={() => {
-                selectGalleryVideo(file, true);
-              }}
-              onMouseEnter={(event) => {
-                const video =
-                  event.currentTarget.querySelector(
-                    'video',
-                  );
+		<select
+		  value={gallerySort}
+		  onChange={(event) => {
+			const sort = event.target.value as typeof gallerySort;
 
-                if (video) {
-                  video.currentTime = 0;
-                  video.muted = true;
+			if (sort === 'random') {
+			  setRandomOrder(shuffleFiles(galleryFiles));
+			}
 
-                  void video.play().catch(() => {
-                    // Browser can block playback.
-                  });
-                }
-              }}
-              onMouseLeave={(event) => {
-                const video =
-                  event.currentTarget.querySelector(
-                    'video',
-                  );
+			setGallerySort(sort);
+		  }}
+		  aria-label="Sort videos"
+		  className="min-w-0 rounded-lg border border-gray-600 bg-gray-800 px-2 py-2 text-white"
+		>
+		  <option value="name-asc">Name (A–Z)</option>
+		  <option value="name-desc">Name (Z–A)</option>
+		  <option value="newest">Newest first</option>
+		  <option value="oldest">Oldest first</option>
+		  <option value="longest">Longest first</option>
+		  <option value="shortest">Shortest first</option>
+		  <option value="random">Random</option>
+		</select>
+      </>
+    )}
+  </div>
 
-                if (video) {
-                  video.pause();
-                  video.currentTime = 0;
-                }
-              }}
-            >
-              {galleryUrls[file.name] ? (
-                <video
-                  data-gallery-video
-                  src={galleryUrls[file.name]}
-                  poster={
-                    galleryThumbnails[file.name]
-                  }
-                  muted
-                  playsInline
-                  preload="metadata"
-                  controls={false}
-                  disablePictureInPicture
-                  aria-hidden="true"
-                  className="w-full aspect-video object-cover"
-                />
-              ) : (
-                <div className="w-full aspect-video bg-gray-900 flex items-center justify-center">
-                  Loading...
-                </div>
-              )}
+  {showGallerySearch && (
+    <p className="mt-2 text-sm text-gray-400" aria-live="polite">
+      {visibleGalleryFiles.length} of {galleryFiles.length} videos
+    </p>
+  )}
+</div>
 
-              <div className="p-2 text-sm text-white truncate">
-                {file.name}
+
+
+    {visibleGalleryFiles.length > 0 ? (
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+        {visibleGalleryFiles.map((file) => (
+          <button
+            key={file.name}
+            type="button"
+            className="overflow-hidden rounded-lg bg-gray-800
+              text-left hover:bg-gray-700"
+            onClick={() => selectGalleryVideo(file)}
+            onDoubleClick={(event) => {event.preventDefault();event.stopPropagation(); selectGalleryVideo(file, true);}}
+            onMouseEnter={(event) => {
+              const video =
+                event.currentTarget.querySelector('video');
+
+              if (video) {
+                video.currentTime = 0;
+                video.muted = true;
+                void video.play().catch(() => {
+                  // The browser may block preview playback.
+                });
+              }
+            }}
+            onMouseLeave={(event) => {
+              const video =
+                event.currentTarget.querySelector('video');
+
+              if (video) {
+                video.pause();
+                video.currentTime = 0;
+              }
+            }}
+          >
+            {galleryUrls[file.name] ? (
+              <video
+                data-gallery-video
+                src={galleryUrls[file.name]}
+                poster={galleryThumbnails[file.name]}
+                muted
+                playsInline
+                preload="metadata"
+                controls={false}
+                disablePictureInPicture
+                aria-hidden="true"
+                className="aspect-video w-full object-cover"
+              />
+            ) : (
+              <div className="flex aspect-video w-full items-center justify-center bg-gray-900">
+                Loading...
               </div>
-            </button>
-          ))}
-        </div>
-      )}
+            )}
+
+            <div className="truncate p-2 text-sm text-white">
+              {file.name}
+            </div>
+          </button>
+        ))}
+      </div>
+    ) : (
+      <p className="py-10 text-center text-gray-400">
+        No videos match your search.
+      </p>
+    )}
+  </section>
+)}
 
       {/* -------------------------------------------------- */}
       {/* MAIN VIDEO */}
