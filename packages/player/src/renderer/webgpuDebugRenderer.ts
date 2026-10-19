@@ -307,6 +307,7 @@ export class WebGPUDebugRenderer {
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
+  private cursorHidden = false;
 
   private bindGroup!: GPUBindGroup;
 
@@ -355,74 +356,95 @@ export class WebGPUDebugRenderer {
       'resize',
       this.handleWindowResize,
     );
+	this.video.addEventListener(
+  'play',
+  this.handlePlaybackChange,
+);
+
+this.video.addEventListener(
+  'pause',
+  this.handlePlaybackChange,
+);
+
+this.video.addEventListener(
+  'ended',
+  this.handlePlaybackChange,
+);
+  }
+  private handlePlaybackChange = () => {
+  this.cursorHidden = !this.video.paused;
+
+  this.canvas.style.cursor = this.cursorHidden
+    ? 'none'
+    : this.dragging
+      ? 'grabbing'
+      : 'grab';
+};
+  
+private handlePointerDown = (
+  event: PointerEvent,
+) => {
+  if (event.button !== 0) {
+    return;
   }
 
-  private handlePointerDown = (
-    event: PointerEvent,
-  ) => {
-    if (event.button !== 0) {
-      return;
-    }
+  this.dragging = true;
 
-    this.dragging = true;
+  this.lastX = event.clientX;
+  this.lastY = event.clientY;
 
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
+  this.canvas.style.cursor = this.cursorHidden
+    ? 'none'
+    : 'grabbing';
 
-    this.canvas.style.cursor =
-      'grabbing';
+  this.canvas.setPointerCapture(
+    event.pointerId,
+  );
+};
 
-    this.canvas.setPointerCapture(
+private handlePointerMove = (
+  event: PointerEvent,
+) => {
+  if (!this.dragging) {
+    return;
+  }
+
+  const dx = event.clientX - this.lastX;
+  const dy = event.clientY - this.lastY;
+
+  this.lastX = event.clientX;
+  this.lastY = event.clientY;
+
+  this.yaw += dx * 0.005;
+  this.pitch += dy * 0.005;
+
+  const limit = Math.PI / 2 - 0.01;
+
+  this.pitch = Math.max(
+    -limit,
+    Math.min(limit, this.pitch),
+  );
+};
+
+private handlePointerUp = (
+  event: PointerEvent,
+) => {
+  this.dragging = false;
+
+  this.canvas.style.cursor = this.cursorHidden
+    ? 'none'
+    : 'grab';
+
+  if (
+    this.canvas.hasPointerCapture(
+      event.pointerId,
+    )
+  ) {
+    this.canvas.releasePointerCapture(
       event.pointerId,
     );
-  };
-
-  private handlePointerMove = (
-    event: PointerEvent,
-  ) => {
-    if (!this.dragging) {
-      return;
-    }
-
-    const dx =
-      event.clientX - this.lastX;
-
-    const dy =
-      event.clientY - this.lastY;
-
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
-
-    this.yaw += dx * 0.005;
-    this.pitch += dy * 0.005;
-
-    const limit =
-      Math.PI / 2 - 0.01;
-
-    this.pitch = Math.max(
-      -limit,
-      Math.min(limit, this.pitch),
-    );
-  };
-
-  private handlePointerUp = (
-    event: PointerEvent,
-  ) => {
-    this.dragging = false;
-
-    this.canvas.style.cursor =
-      'grab';
-
-    if (
-      this.canvas.hasPointerCapture(
-        event.pointerId,
-      )
-    ) {
-      this.canvas.releasePointerCapture(
-        event.pointerId,
-      );
-    }
-  };
+  }
+};
 
   private handleWheel = (
     event: WheelEvent,
