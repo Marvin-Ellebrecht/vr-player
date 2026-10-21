@@ -83,6 +83,8 @@ class WebGLDebugRenderer extends Renderer {
   private yaw = 0;
   private pitch = 0;
   private fov = Math.PI / 2;
+  private lastFrameTime = 0;
+  private targetFov = Math.PI / 2;
 
   private dragging = false;
   private lastX = 0;
@@ -185,21 +187,27 @@ private handlePlaybackChange = () => {
     }
   };
 
-  private handleWheel = (event: WheelEvent) => {
-    event.preventDefault();
+private handleWheel = (event: WheelEvent) => {
+  event.preventDefault();
 
-    this.fov += event.deltaY * 0.0015;
-    this.fov = Math.max(
-      Math.PI / 6,
-      Math.min(Math.PI * 0.85, this.fov),
-    );
-  };
+  const minFov = Math.PI / 6;
+  const maxFov = Math.PI * 0.85;
+
+  this.targetFov = Math.max(
+    minFov,
+    Math.min(
+      maxFov,
+      this.targetFov + event.deltaY * 0.0015,
+    ),
+  );
+};
 
   private handleKeyDown = (event: KeyboardEvent) => {
     if (event.key.toLowerCase() === 'r') {
       this.yaw = 0;
       this.pitch = 0;
       this.fov = Math.PI / 2;
+	  this.targetFov = Math.PI / 2;
     }
   };
 
@@ -251,6 +259,26 @@ private handlePlaybackChange = () => {
       if (this.frameTracker?.consumeFrame()) {
         texture.subimage(textureProps);
       }
+	  
+	  const now = performance.now();
+
+		const deltaTime =
+		  this.lastFrameTime === 0
+			? 1 / 60
+			: Math.min((now - this.lastFrameTime) / 1000, 0.05);
+
+		this.lastFrameTime = now;
+
+		// Frame-rate-independent, smooth zoom.
+		const smoothFactor = 1 - Math.exp(-2 * deltaTime);
+
+		this.fov +=
+		  (this.targetFov - this.fov) * smoothFactor;
+
+		// Snap to the target when the difference is negligible.
+		if (Math.abs(this.targetFov - this.fov) < 0.0001) {
+		  this.fov = this.targetFov;
+		}
 
       const projection = mat4.perspective(
         mat4.create(),
