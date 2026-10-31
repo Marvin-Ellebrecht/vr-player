@@ -24,7 +24,8 @@ var videoSampler: sampler;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
-  @location(0) clipCoord: vec2<f32>,
+  @location(0) nearPoint: vec3<f32>,
+  @location(1) farPoint: vec3<f32>,
 };
 
 @vertex
@@ -41,54 +42,34 @@ fn vertexMain(
     vec2<f32>(-1.0, 1.0),
   );
 
+  let clip = positions[index];
+
+  let nearModel =
+    uniforms.inverseModelViewProjection *
+    vec4<f32>(clip, 0.0, 1.0);
+
+  let farModel =
+    uniforms.inverseModelViewProjection *
+    vec4<f32>(clip, 1.0, 1.0);
+
   var output: VertexOutput;
 
   output.position = vec4<f32>(
-    positions[index],
+    clip,
     0.0,
     1.0
   );
 
-  output.clipCoord = positions[index];
+  output.nearPoint =
+    nearModel.xyz / nearModel.w;
+
+  output.farPoint =
+    farModel.xyz / farModel.w;
 
   return output;
 }
 
-fn getRay(
-  clipCoord: vec2<f32>,
-) -> vec3<f32> {
-  /*
-   * WebGPU uses a depth range of 0..1.
-   *
-   * The near point therefore uses Z = 0
-   * and the far point uses Z = 1.
-   */
-  let nearModel =
-    uniforms.inverseModelViewProjection *
-    vec4<f32>(
-      clipCoord,
-      0.0,
-      1.0
-    );
 
-  let farModel =
-    uniforms.inverseModelViewProjection *
-    vec4<f32>(
-      clipCoord,
-      1.0,
-      1.0
-    );
-
-  let nearPoint =
-    nearModel.xyz / nearModel.w;
-
-  let farPoint =
-    farModel.xyz / farModel.w;
-
-  return normalize(
-    farPoint - nearPoint
-  );
-}
 
 fn sphereUV(
   hit: vec3<f32>,
@@ -111,7 +92,10 @@ fn fragmentMain(
   input: VertexOutput,
 ) -> @location(0) vec4<f32> {
   let origin = uniforms.modelSpaceEye;
-  let direction = getRay(input.clipCoord);
+
+  let direction = normalize(
+    input.farPoint - input.nearPoint
+  );
 
   /*
    * Intersect the viewing ray with the sphere.
@@ -288,7 +272,48 @@ function perspectiveWebGPU(
 }
 
 export class WebGPUDebugRenderer {
+	private static nextId = 1;
+
+  private readonly instanceId =
+    WebGPUDebugRenderer.nextId++;
+
   private raf = 0;
+
+  // Lifecycle protection
+  private running = false;
+  private starting = false;
+  private disposed = false;
+
+  // Diagnostics
+  private frameCount = 0;
+  private videoEventCount = 0;
+  private videoReloads = 0;
+  private reportInterval:
+    ReturnType<typeof setInterval> | null = null;
+
+  private startTime = 0;
+  private lastReportTime = 0;
+  private lastReportedFrames = 0;
+  private submittedFrameCount = 0;
+private lastReportedSubmittedFrames = 0;
+
+  private readonly videoEventNames = [
+    'loadstart',
+    'loadedmetadata',
+    'loadeddata',
+    'canplay',
+    'playing',
+    'waiting',
+    'seeking',
+    'seeked',
+    'ended',
+    'emptied',
+    'abort',
+    'error',
+    'pause',
+  ];
+
+  private videoEventsRegistered = false;
 
   private frameTracker:
     | VideoFrameTracker
@@ -299,6 +324,9 @@ export class WebGPUDebugRenderer {
   private pipeline!: GPURenderPipeline;
   private uniformBuffer!: GPUBuffer;
   private sampler!: GPUSampler;
+  private lastVideoFrames = 0;
+private lastDroppedFrames = 0;
+private lastVideoSampleTime = 0;
 
   private yaw = 0;
   private pitch = 0;
@@ -382,7 +410,255 @@ this.video.addEventListener(
       ? 'grabbing'
       : 'grab';
 };
-  
+
+private registerVideoEvents(): void {
+  if (this.videoEventsRegistered) return;
+
+  this.videoEventsRegistered = true;
+
+  for (const eventName of this.videoEventNames) {
+    this.video.addEventListener(
+      eventName,
+      this.onVideoEvent,
+    );
+  }
+}
+
+private unregisterVideoEvents(): void {
+  if (!this.videoEventsRegistered) return;
+
+  this.videoEventsRegistered = false;
+
+  for (const eventName of this.videoEventNames) {
+    this.video.removeEventListener(
+      eventName,
+      this.onVideoEvent,
+    );
+  }
+}
+
+private onVideoEvent = (event: Event): void => {
+  if (this.disposed) return;
+
+  this.videoEventCount++;
+
+  if (
+    event.type === 'loadstart' ||
+    event.type === 'emptied'
+  ) {
+    this.videoReloads++;
+  }
+
+  console.log(
+    `[GPU ${this.instanceId}] VIDEO EVENT: ${event.type}`,
+    {
+      currentTime: this.video.currentTime,
+      readyState: this.video.readyState,
+      paused: this.video.paused,
+      reloads: this.videoReloads,
+      eventCount: this.videoEventCount,
+    },
+  );
+};
+
+private report = (): void => {
+  if (!this.running || this.disposed) return;
+
+  const now = performance.now();
+
+  const elapsed =
+    (now - this.startTime) / 1000;
+
+  const interval =
+    (now - this.lastReportTime) / 1000;
+
+  // Actual submitted GPU frames
+  const submittedFrames =
+    this.submittedFrameCount -
+    this.lastReportedSubmittedFrames;
+
+  const renderFPS =
+    interval > 0
+      ? submittedFrames / interval
+      : 0;
+
+  // Animation frame callbacks
+  const animationFrames =
+    this.frameCount - this.lastReportedFrames;
+
+  const animationFPS =
+    interval > 0
+      ? animationFrames / interval
+      : 0;
+
+  // Browser video statistics
+  const quality =
+    this.video.getVideoPlaybackQuality();
+
+  const videoElapsed =
+    this.lastVideoSampleTime > 0
+      ? (now - this.lastVideoSampleTime) / 1000
+      : 0;
+
+  const videoFPS =
+    videoElapsed > 0
+      ? (
+          quality.totalVideoFrames -
+          this.lastVideoFrames
+        ) / videoElapsed
+      : 0;
+
+  const droppedFPS =
+    videoElapsed > 0
+      ? (
+          quality.droppedVideoFrames -
+          this.lastDroppedFrames
+        ) / videoElapsed
+      : 0;
+
+  const corruptedFrames =
+    quality.corruptedVideoFrames;
+
+  console.group(
+    `[GPU ${this.instanceId}] PERFORMANCE REPORT`,
+  );
+
+  console.table({
+    instanceId: this.instanceId,
+    eye: this.eye,
+    layout: this.layout,
+    format: this.format,
+
+    // Video resolution
+    resolution:
+      `${this.video.videoWidth}x${this.video.videoHeight}`,
+
+    megapixels: (
+      this.video.videoWidth *
+      this.video.videoHeight /
+      1000000
+    ).toFixed(2),
+
+    // Runtime
+    runtimeSeconds: elapsed.toFixed(1),
+
+    // Rendering performance
+    renderFPS: renderFPS.toFixed(2),
+    animationFPS: animationFPS.toFixed(2),
+
+    submittedFrames:
+      this.submittedFrameCount,
+
+    animationFrames:
+      this.frameCount,
+
+    skippedRenderFrames:
+      animationFrames - submittedFrames,
+
+    // Video performance
+    videoFPS: videoFPS.toFixed(2),
+    droppedFPS: droppedFPS.toFixed(2),
+
+    totalVideoFrames:
+      quality.totalVideoFrames,
+
+    droppedVideoFrames:
+      quality.droppedVideoFrames,
+
+    corruptedVideoFrames:
+      corruptedFrames,
+
+    // Rendering efficiency
+    renderToVideoRatio:
+      videoFPS > 0
+        ? (renderFPS / videoFPS).toFixed(2)
+        : 0,
+
+    // Playback
+    currentTime:
+      this.video.currentTime.toFixed(3),
+
+    readyState:
+      this.video.readyState,
+
+    paused:
+      this.video.paused,
+
+    seeking:
+      this.video.seeking,
+
+    // Canvas
+    canvasResolution:
+      `${this.canvas.width}x${this.canvas.height}`,
+
+    canvasMegapixels: (
+      this.canvas.width *
+      this.canvas.height /
+      1000000
+    ).toFixed(2),
+
+    // Video events
+    videoEvents:
+      this.videoEventCount,
+
+    videoReloads:
+      this.videoReloads,
+
+    // GPU
+    gpuDeviceCreated:
+      !!this.device,
+  });
+
+  // Additional warnings
+  if (renderFPS < 30) {
+    console.warn(
+      `[GPU ${this.instanceId}] LOW RENDER FPS`,
+      {
+        renderFPS: renderFPS.toFixed(2),
+        videoFPS: videoFPS.toFixed(2),
+        layout: this.layout,
+      },
+    );
+  }
+
+  if (droppedFPS > 5) {
+    console.warn(
+      `[GPU ${this.instanceId}] VIDEO DROPPING FRAMES`,
+      {
+        droppedFPS: droppedFPS.toFixed(2),
+        totalDropped:
+          quality.droppedVideoFrames,
+      },
+    );
+  }
+
+  if (renderFPS > 0 && videoFPS > 0) {
+    console.log(
+      `[GPU ${this.instanceId}] PERFORMANCE SUMMARY`,
+      `${renderFPS.toFixed(1)} render FPS / ` +
+      `${videoFPS.toFixed(1)} video FPS`,
+    );
+  }
+
+  console.groupEnd();
+
+  // Update baselines
+  this.lastReportTime = now;
+
+  this.lastReportedFrames =
+    this.frameCount;
+
+  this.lastReportedSubmittedFrames =
+    this.submittedFrameCount;
+
+  this.lastVideoFrames =
+    quality.totalVideoFrames;
+
+  this.lastDroppedFrames =
+    quality.droppedVideoFrames;
+
+  this.lastVideoSampleTime = now;
+};
 private handlePointerDown = (
   event: PointerEvent,
 ) => {
@@ -510,7 +786,60 @@ private handleWheel = (event: WheelEvent) => {
     }
   }
 
-  async start(): Promise<void> {
+async start(): Promise<void> {
+  if (
+    this.disposed ||
+    this.running ||
+    this.starting
+  ) {
+    console.warn(
+      `[GPU ${this.instanceId}] START IGNORED`,
+      {
+        eye: this.eye,
+        running: this.running,
+        starting: this.starting,
+        disposed: this.disposed,
+      },
+    );
+
+    return;
+  }
+this.submittedFrameCount = 0;
+this.lastReportedSubmittedFrames = 0;
+
+const quality = this.video.getVideoPlaybackQuality();
+
+this.lastVideoFrames = quality.totalVideoFrames;
+this.lastDroppedFrames = quality.droppedVideoFrames;
+this.lastVideoSampleTime = performance.now();
+  this.starting = true;
+
+  console.group(
+    `[GPU ${this.instanceId}] STARTING`,
+  );
+
+  try {
+    this.frameCount = 0;
+    this.videoEventCount = 0;
+    this.videoReloads = 0;
+
+    this.startTime = performance.now();
+    this.lastReportTime = this.startTime;
+    this.lastReportedFrames = 0;
+
+    console.table({
+      instanceId: this.instanceId,
+      eye: this.eye,
+      resolution:
+        `${this.video.videoWidth}x${this.video.videoHeight}`,
+      readyState: this.video.readyState,
+      currentTime: this.video.currentTime,
+      currentSrc: this.video.currentSrc,
+      gpuAvailable: !!navigator.gpu,
+    });
+
+    this.registerVideoEvents();
+
     const gpu = navigator.gpu;
 
     if (!gpu) {
@@ -519,8 +848,16 @@ private handleWheel = (event: WheelEvent) => {
       );
     }
 
-    const adapter =
-      await gpu.requestAdapter();
+    const adapter = await gpu.requestAdapter();
+
+    // React may have unmounted this renderer
+    // while adapter initialization was pending.
+    if (this.disposed) {
+      console.warn(
+        `[GPU ${this.instanceId}] CANCELLED AFTER ADAPTER`,
+      );
+      return;
+    }
 
     if (!adapter) {
       throw new Error(
@@ -528,8 +865,21 @@ private handleWheel = (event: WheelEvent) => {
       );
     }
 
-    this.device =
-      await adapter.requestDevice();
+    const device = await adapter.requestDevice();
+
+    // Never keep a GPU device belonging to
+    // an already disposed renderer.
+    if (this.disposed) {
+      device.destroy();
+
+      console.warn(
+        `[GPU ${this.instanceId}] CANCELLED AFTER DEVICE`,
+      );
+
+      return;
+    }
+
+    this.device = device;
 
     const context =
       this.canvas.getContext('webgpu');
@@ -580,39 +930,92 @@ private handleWheel = (event: WheelEvent) => {
     this.pipeline =
       this.device.createRenderPipeline({
         layout: 'auto',
-
         vertex: {
           module: shaderModule,
           entryPoint: 'vertexMain',
         },
-
         fragment: {
           module: shaderModule,
           entryPoint: 'fragmentMain',
-
           targets: [
             {
               format: canvasFormat,
             },
           ],
         },
-
         primitive: {
           topology: 'triangle-list',
         },
       });
 
     this.frameTracker =
-      new VideoFrameTracker(
-        this.video,
-      );
+      new VideoFrameTracker(this.video);
+
+    if (this.disposed) {
+      this.device.destroy();
+      return;
+    }
+
+    this.running = true;
+
+    this.reportInterval = setInterval(
+      this.report,
+      1000,
+    );
+
+    console.log(
+      `[GPU ${this.instanceId}] STARTED`,
+      {
+        eye: this.eye,
+        gpuDeviceCreated: true,
+        renderLoopCount: 1,
+      },
+    );
+
+    console.groupEnd();
 
     this.render();
+
+  } catch (error) {
+    this.running = false;
+
+    cancelAnimationFrame(this.raf);
+    this.raf = 0;
+
+    this.frameTracker?.stop();
+    this.frameTracker = null;
+
+    this.unregisterVideoEvents();
+
+    if (this.reportInterval !== null) {
+      clearInterval(this.reportInterval);
+      this.reportInterval = null;
+    }
+
+    this.device?.destroy();
+
+    console.error(
+      `[GPU ${this.instanceId}] START FAILED`,
+      error,
+    );
+
+    console.groupEnd();
+
+    throw error;
+
+  } finally {
+    this.starting = false;
+  }
+}
+private render = () => {
+  if (!this.running || this.disposed) {
+    return;
   }
 
-private render = () => {
-  // Keep the render loop alive even if this frame fails.
+  // Exactly one scheduled animation frame per renderer.
   this.raf = requestAnimationFrame(this.render);
+
+  this.frameCount++;
 
   try {
     this.resizeCanvas();
@@ -713,18 +1116,17 @@ private render = () => {
       mat4.create();
 
     if (
-      mat4.invert(
-        inverseVP,
-        vp,
-      ) === null
-    ) {
-      this.raf =
-        requestAnimationFrame(
-          this.render,
-        );
+	  mat4.invert(
+		inverseVP,
+		vp,
+	  ) === null
+	) {
+	  console.warn(
+		`[GPU ${this.instanceId}] INVALID VIEW MATRIX`,
+	  );
 
-      return;
-    }
+	  return;
+	}
 
     const model =
       this.getModelMatrix();
@@ -733,18 +1135,17 @@ private render = () => {
       mat4.create();
 
     if (
-      mat4.invert(
-        inverseModel,
-        model,
-      ) === null
-    ) {
-      this.raf =
-        requestAnimationFrame(
-          this.render,
-        );
+	  mat4.invert(
+		inverseModel,
+		model,
+	  ) === null
+	) {
+	  console.warn(
+		`[GPU ${this.instanceId}] INVALID MODEL MATRIX`,
+	  );
 
-      return;
-    }
+	  return;
+	}
 
     const inverseModelViewProjection =
       mat4.multiply(
@@ -865,29 +1266,44 @@ private render = () => {
         },
       ];
 
-    const pass =
-      commandEncoder.beginRenderPass({
-        colorAttachments,
-      });
+const pass =
+  commandEncoder.beginRenderPass({
+    colorAttachments,
+  });
 
-    pass.setPipeline(
-      this.pipeline,
-    );
+pass.setPipeline(this.pipeline);
 
-    pass.setBindGroup(
-      0,
-      this.bindGroup,
-    );
+pass.setBindGroup(
+  0,
+  this.bindGroup,
+);
 
-    pass.draw(6);
+pass.draw(6);
 
-    pass.end();
+pass.end();
 
-    this.device.queue.submit([
-      commandEncoder.finish(),
-    ]);
+// Submit GPU commands
+this.device.queue.submit([
+  commandEncoder.finish(),
+]);
+
+// Count submitted frames
+this.submittedFrameCount++;
+
+if (this.submittedFrameCount % 60 === 0) {
+  console.log(
+    `[GPU ${this.instanceId}] GPU SUBMISSIONS`,
+    {
+      submittedFrames: this.submittedFrameCount,
+      eye: this.eye,
+      layout: this.layout,
+    },
+  );
+}
+	
+	
 } catch (error) {
-    console.error('WebGPU render error:', error);
+    console.error(`[GPU ${this.instanceId}] RENDER ERROR`, error, );
   }
 };
 
@@ -1009,48 +1425,105 @@ private render = () => {
       : offsets;
   }
 
-  stop() {
-    cancelAnimationFrame(
-      this.raf,
+ stop(): void {
+  if (this.disposed) {
+    console.warn(
+      `[GPU ${this.instanceId}] STOP IGNORED - ALREADY DISPOSED`,
     );
-
-    this.frameTracker?.stop();
-
-    this.device?.destroy();
-
-    window.removeEventListener(
-      'keydown',
-      this.handleKeyDown,
-    );
-
-    window.removeEventListener(
-      'resize',
-      this.handleWindowResize,
-    );
-
-    this.canvas.removeEventListener(
-      'pointerdown',
-      this.handlePointerDown,
-    );
-
-    this.canvas.removeEventListener(
-      'pointermove',
-      this.handlePointerMove,
-    );
-
-    this.canvas.removeEventListener(
-      'pointerup',
-      this.handlePointerUp,
-    );
-
-    this.canvas.removeEventListener(
-      'pointercancel',
-      this.handlePointerUp,
-    );
-
-    this.canvas.removeEventListener(
-      'wheel',
-      this.handleWheel,
-    );
+    return;
   }
+
+  console.group(
+    `[GPU ${this.instanceId}] STOPPING`,
+  );
+
+  this.disposed = true;
+  this.running = false;
+
+  cancelAnimationFrame(this.raf);
+  this.raf = 0;
+
+  this.frameTracker?.stop();
+  this.frameTracker = null;
+
+  this.unregisterVideoEvents();
+
+  if (this.reportInterval !== null) {
+    clearInterval(this.reportInterval);
+    this.reportInterval = null;
+  }
+
+  this.device?.destroy();
+
+  window.removeEventListener(
+    'keydown',
+    this.handleKeyDown,
+  );
+
+  window.removeEventListener(
+    'resize',
+    this.handleWindowResize,
+  );
+
+  this.canvas.removeEventListener(
+    'pointerdown',
+    this.handlePointerDown,
+  );
+
+  this.canvas.removeEventListener(
+    'pointermove',
+    this.handlePointerMove,
+  );
+
+  this.canvas.removeEventListener(
+    'pointerup',
+    this.handlePointerUp,
+  );
+
+  this.canvas.removeEventListener(
+    'pointercancel',
+    this.handlePointerUp,
+  );
+
+  this.canvas.removeEventListener(
+    'wheel',
+    this.handleWheel,
+  );
+
+  this.video.removeEventListener(
+    'play',
+    this.handlePlaybackChange,
+  );
+
+  this.video.removeEventListener(
+    'pause',
+    this.handlePlaybackChange,
+  );
+
+  this.video.removeEventListener(
+    'ended',
+    this.handlePlaybackChange,
+  );
+
+  console.table({
+    instanceId: this.instanceId,
+    eye: this.eye,
+    totalFrames: this.frameCount,
+    videoEvents: this.videoEventCount,
+    videoReloads: this.videoReloads,
+    runtimeSeconds: this.startTime
+      ? (
+          (performance.now() - this.startTime) /
+          1000
+        ).toFixed(2)
+      : 0,
+    gpuDeviceDestroyed: true,
+  });
+
+  console.log(
+    `[GPU ${this.instanceId}] STOPPED`,
+  );
+
+  console.groupEnd();
+}
 }

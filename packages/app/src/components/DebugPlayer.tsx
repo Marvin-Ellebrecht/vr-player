@@ -176,7 +176,6 @@ export function DebugPlayer({
       activeCanvas = null;
     };
   }, [
-    autoPlay,
     container,
     flipLayout,
     format,

@@ -138,10 +138,11 @@ const visibleGalleryFiles = galleryFiles
     const url = URL.createObjectURL(file);
 
     const cleanup = () => {
-      URL.revokeObjectURL(url);
-      video.removeAttribute('src');
-      video.load();
-    };
+		  video.pause();
+		  video.removeAttribute('src');
+		  video.load();
+		  URL.revokeObjectURL(url);
+		};
 
     video.preload = 'metadata';
 
@@ -166,43 +167,25 @@ const visibleGalleryFiles = galleryFiles
    * ---------------------------------------------------------
    */
 
-  const loadVideo = (url: string) => {
-    const video = videoRef.current;
-	
+const loadVideo = (url: string) => {
+  const video = videoRef.current;
 
-    if (!video) {
-      console.warn('Video element not available yet');
-      return;
-    }
+  if (!video) return;
 
-    console.log('Loading video:', url);
+  console.log('[App] Loading video:', url);
 
-    video.pause();
+  video.pause();
 
-    setReady(false);
-    setPlaying(false);
-    setCurrentTime(0);
-    setDuration(0);
+  setReady(false);
+  setPlaying(false);
+  setCurrentTime(0);
+  setDuration(0);
 
-    /*
-     * Completely remove the old source.
-     */
-    video.removeAttribute('src');
-    video.load();
+  video.src = url;
+  video.load();
 
-    /*
-     * Set the new source.
-     */
-    video.src = url;
-    video.load();
-
-    /*
-     * Important:
-     * Update the React state as well.
-     */
-    setVideoUrl(url);
-  };
-
+  setVideoUrl(url);
+};
   /*
    * ---------------------------------------------------------
    * FILE VIA DRAG & DROP
