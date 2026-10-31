@@ -13,16 +13,16 @@
     "update": "ncu && npm install"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.57.2",
-    "@typescript-eslint/parser": "^8.57.2",
+    "@typescript-eslint/eslint-plugin": "^8.72.0",
+    "@typescript-eslint/parser": "^8.72.0",
 	"@webgpu/types": "^0.1.74",
-    "eslint": "^8.57.0",
+    "eslint": "^10.14.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-import-resolver-typescript": "^4.4.5",
     "eslint-plugin-import": "^2.32.0",
-    "eslint-plugin-prettier": "^5.5.5",
+    "eslint-plugin-prettier": "^5.5.7",
     "eslint-plugin-sort-imports-es6-autofix": "^0.6.0",
-    "npm-check-updates": "^19.6.6",
-    "prettier": "^3.8.1"
+    "npm-check-updates": "^23.1.1",
+    "prettier": "^3.9.10"
   }
 }

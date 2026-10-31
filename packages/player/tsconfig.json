@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es5",
+    "target": "ESNext",
     "lib": [
       "ESNext",
       "DOM",
@@ -13,11 +13,12 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "declaration": true,
     "sourceMap": true,
+	"rootDir": "./src",
     "outDir": "./lib",
 	"types": ["@webgpu/types", "webxr"],
 	},
