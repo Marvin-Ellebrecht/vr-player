@@ -44,6 +44,172 @@ function shuffleFiles(files: File[]): string[] {
   return names;
 }
 
+function createLimiter(concurrency: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+
+  const runNext = () => {
+    if (active >= concurrency || queue.length === 0) {
+      return;
+    }
+
+    active++;
+
+    const task = queue.shift()!;
+
+    task();
+  };
+
+  return function limit<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      queue.push(() => {
+        void task()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            runNext();
+          });
+      });
+
+      runNext();
+    });
+  };
+}
+
+
+
+
+function getVideoMetadata(
+  file: File
+): Promise<{ duration: number; aspectRatio: number }> {
+  return new Promise((resolve) => {
+    const id = Math.random().toString(36).slice(2, 8);
+    const started = performance.now();
+
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+
+    let finished = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    let heartbeat: ReturnType<typeof setInterval>;
+
+    const fallback = {
+      duration: 0,
+      aspectRatio: 16 / 9,
+    };
+
+    const log = (event: string) => {
+      const buffered = [];
+
+      for (let i = 0; i < video.buffered.length; i++) {
+        buffered.push({
+          start: video.buffered.start(i),
+          end: video.buffered.end(i),
+        });
+      }
+
+      console.log(`[Metadata ${id}] ${event}`, {
+        elapsed: Math.round(performance.now() - started),
+        fileName: file.name,
+        sizeMB: (file.size / 1024 / 1024).toFixed(2),
+        readyState: video.readyState,
+        networkState: video.networkState,
+        error: video.error?.code ?? null,
+        duration: video.duration,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        buffered,
+      });
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      clearInterval(heartbeat);
+
+      video.onloadedmetadata = null;
+      video.onerror = null;
+      video.onstalled = null;
+      video.onabort = null;
+      video.onprogress = null;
+      video.onwaiting = null;
+      video.onloadstart = null;
+
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+
+      URL.revokeObjectURL(url);
+    };
+
+    const finish = (
+      result: { duration: number; aspectRatio: number }
+    ) => {
+      if (finished) return;
+
+      finished = true;
+
+      log('FINISHED');
+      cleanup();
+
+      resolve(result);
+    };
+
+    timeout = setTimeout(() => {
+      log('TIMEOUT');
+      finish(fallback);
+    }, 30000);
+
+    heartbeat = setInterval(() => {
+      log('HEARTBEAT');
+    }, 3000);
+
+    log('START');
+
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+
+    video.onloadstart = () => log('LOADSTART');
+    video.onprogress = () => log('PROGRESS');
+    video.onstalled = () => log('STALLED');
+    video.onwaiting = () => log('WAITING');
+
+    video.onabort = () => {
+      log('ABORTED');
+      finish(fallback);
+    };
+
+    video.onerror = () => {
+      log('ERROR');
+      finish(fallback);
+    };
+
+    video.onloadedmetadata = () => {
+      log('LOADED METADATA');
+
+      finish({
+        duration: Number.isFinite(video.duration)
+          ? video.duration
+          : 0,
+
+        aspectRatio:
+          video.videoWidth > 0 && video.videoHeight > 0
+            ? video.videoWidth / video.videoHeight
+            : 16 / 9,
+      });
+    };
+
+    video.src = url;
+
+    log('SOURCE SET');
+
+    video.load();
+
+    log('LOAD CALLED');
+  });
+}
+
+
 export function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -85,10 +251,186 @@ export function App() {
   const [showGallerySearch, setShowGallerySearch] = useState(false);
   const toggleGallerySearch = () => {if (showGallerySearch) {setGallerySearch('');} setShowGallerySearch((previous) => !previous);};
   const [randomOrder, setRandomOrder] = useState<string[]>([]);  
-  
-  const normalizedSearch = gallerySearch.trim().toLocaleLowerCase();
+  const [galleryAspectRatios, setGalleryAspectRatios] = useState<Record<string, number>>({});
 
+  const normalizedSearch = gallerySearch.trim().toLocaleLowerCase();
+  const galleryPreviewRef = useRef<HTMLVideoElement>(null);
+  const hoveredVideoRef = useRef<string | null>(null);
+  const hoveredCardRef = useRef<HTMLDivElement | null>(null);
+
+
+
+
+const handleGalleryMouseEnter = (
+  file: File,
+  card: HTMLDivElement
+) => {
+  const video = galleryPreviewRef.current;
+  const url = galleryUrls[file.name];
+
+  if (!video || !url) return;
+
+  if (hoveredVideoRef.current === file.name) return;
+
+  hoveredVideoRef.current = file.name;
+  hoveredCardRef.current = card;
+
+  const thumbnail = card.querySelector('.gallery-thumbnail');
   
+  if (thumbnail) {
+	thumbnail.style.opacity = '1';
+ }
+
+  // Keep thumbnail visible until video has a decoded frame
+  video.pause();
+  video.onloadeddata = null;
+  video.onplaying = null;
+
+  const rect = card.getBoundingClientRect();
+
+	Object.assign(video.style, {
+	  position: 'fixed',
+	  left: `${rect.left}px`,
+	  top: `${rect.top}px`,
+	  width: `${rect.width}px`,
+	  height: `${rect.height}px`,
+	  zIndex: '9999',
+	  display: 'block',
+	  opacity: '0',
+	  transition: 'opacity 400ms ease',
+	  pointerEvents: 'none',
+	  objectFit: 'cover',
+	  backgroundColor: 'transparent',
+	});
+
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+
+  video.onloadeddata = () => {
+    if (hoveredVideoRef.current !== file.name) return;
+
+    // Start from the beginning after the first frame is available
+    video.currentTime = 0;
+  };
+
+  video.onseeked = () => {
+    if (hoveredVideoRef.current !== file.name) return;
+
+    void video.play().catch((error) => {
+      console.warn('[Gallery] Preview playback failed:', error);
+    });
+  };
+
+video.onplaying = () => {
+  if (hoveredVideoRef.current !== file.name) return;
+
+  const thumbnail = card.querySelector(
+    '.gallery-thumbnail'
+  ) as HTMLImageElement | null;
+
+  // Make sure video starts transparent
+  video.style.opacity = '0';
+
+  // Fade in video
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      video.style.opacity = '1';
+    });
+  });
+
+  // Fade out thumbnail
+  if (thumbnail) {
+    thumbnail.style.transition = 'opacity 600ms ease-in-out';
+    thumbnail.style.opacity = '0';
+  }
+};
+
+  video.onerror = () => {
+    console.error('[Gallery] Preview video error:', {
+      file: file.name,
+      error: video.error,
+    });
+  };
+
+  video.src = url;
+  video.load();
+};
+
+const handleGalleryMouseLeave = () => {
+  const video = galleryPreviewRef.current;
+  const card = hoveredCardRef.current;
+
+  if (!video) return;
+
+  hoveredVideoRef.current = null;
+
+  // Fade video OUT
+  video.style.transition = 'opacity 600ms ease-in-out';
+  video.style.opacity = '0';
+
+  // Fade thumbnail IN
+  if (card) {
+    const thumbnail = card.querySelector(
+      '.gallery-thumbnail'
+    ) as HTMLImageElement | null;
+
+    if (thumbnail) {
+      thumbnail.style.transition = 'opacity 600ms ease-in-out';
+      thumbnail.style.opacity = '1';
+    }
+  }
+
+  // Wait until fade-out finishes
+  setTimeout(() => {
+    if (hoveredVideoRef.current !== null) return;
+	hoveredCardRef.current = null;
+
+    video.pause();
+    video.onloadeddata = null;
+    video.onplaying = null;
+    video.onseeked = null;
+
+    video.removeAttribute('src');
+    video.load();
+
+    video.style.display = 'none';
+    video.style.position = '';
+    video.style.left = '';
+    video.style.top = '';
+    video.style.width = '';
+    video.style.height = '';
+    video.style.opacity = '';
+    video.style.transition = '';
+    video.style.zIndex = '';
+  }, 600);
+};
+
+
+const updatePreviewPosition = () => {
+  const video = galleryPreviewRef.current;
+  const card = hoveredCardRef.current;
+
+  if (!video || !card) return;
+
+  const rect = card.getBoundingClientRect();
+
+  video.style.position = 'fixed';
+  video.style.left = `${rect.left}px`;
+  video.style.top = `${rect.top}px`;
+  video.style.width = `${rect.width}px`;
+  video.style.height = `${rect.height}px`;
+};
+
+useEffect(() => {
+  window.addEventListener('scroll', updatePreviewPosition, true);
+  window.addEventListener('resize', updatePreviewPosition);
+
+  return () => {
+    window.removeEventListener('scroll', updatePreviewPosition, true);
+    window.removeEventListener('resize', updatePreviewPosition);
+  };
+}, []);
 
 const visibleGalleryFiles = galleryFiles
   .filter((file) =>
@@ -138,13 +480,17 @@ const visibleGalleryFiles = galleryFiles
     const url = URL.createObjectURL(file);
 
     const cleanup = () => {
-		  video.pause();
-		  video.removeAttribute('src');
-		  video.load();
-		  URL.revokeObjectURL(url);
-		};
+	  video.pause();
+	  video.removeAttribute('src');
+	  video.load();
 
-    video.preload = 'metadata';
+	  canvas.width = 0;
+	  canvas.height = 0;
+
+	  URL.revokeObjectURL(url);
+	};
+
+    video.preload = 'auto';
 
     video.onloadedmetadata = () => {
       const duration = video.duration;
@@ -220,58 +566,216 @@ const handleVideoFile = (selectedFile: File) => {
    * ---------------------------------------------------------
    */
 
-  const createVideoThumbnail = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      const url = URL.createObjectURL(file);
 
-      video.src = url;
-      video.muted = true;
-      video.preload = 'metadata';
-      video.playsInline = true;
 
-      video.onloadedmetadata = () => {
-        if (!Number.isFinite(video.duration)) {
-          URL.revokeObjectURL(url);
-          reject(new Error(`Invalid duration for ${file.name}`));
-          return;
-        }
+const createVideoThumbnail = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d', { willReadFrequently: true,});
 
-        video.currentTime = Math.min(1, video.duration / 2);
-      };
+    if (!context) {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not create thumbnail canvas'));
+      return;
+    }
 
-      video.onseeked = () => {
-        const canvas = document.createElement('canvas');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
 
-        canvas.width = 320;
-        canvas.height = 180;
+    let timestamps: number[] = [];
+    let currentAttempt = 0;
+    let lastThumbnail = '';
+	let finished = false;
+	let timeout: ReturnType<typeof setTimeout>;
 
-        const context = canvas.getContext('2d');
+    const cleanup = () => {
+	  clearTimeout(timeout);
 
-        if (!context) {
-          URL.revokeObjectURL(url);
-          reject(new Error('Could not create thumbnail canvas'));
-          return;
-        }
+	  video.onloadedmetadata = null;
+	  video.onloadeddata = null;
+	  video.onseeked = null;
+	  video.onerror = null;
 
-        context.drawImage(
-          video,
-          0,
-          0,
-          canvas.width,
-          canvas.height,
-        );
+	  video.pause();
+	  video.removeAttribute('src');
+	  video.load();
 
-        URL.revokeObjectURL(url);
+	  URL.revokeObjectURL(url);
+	};
 
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
-      };
+	const fail = (message: string) => {
+	  if (finished) return;
 
-      video.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error(`Could not load ${file.name}`));
-      };
-    });
+	  finished = true;
+	  console.warn('[Gallery]', message);
+
+	  cleanup();
+	  reject(new Error(message));
+	};
+
+	const succeed = (thumbnail: string) => {
+	  if (finished) return;
+
+	  finished = true;
+
+	  cleanup();
+	  resolve(thumbnail);
+	};
+	// Maximum 15 seconds for one thumbnail.
+	timeout = setTimeout(() => {
+	  fail(`Thumbnail timeout: ${file.name}`);
+	}, 15000);
+
+
+const isBadFrame = () => {
+  const imageData = context.getImageData(
+    0, 0, canvas.width, canvas.height
+  );
+
+  const pixels = imageData.data;
+
+  let sum = 0;
+  let sumSquared = 0;
+
+  const totalPixels = pixels.length / 4;
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    const brightness =
+      0.2126 * pixels[i] +
+      0.7152 * pixels[i + 1] +
+      0.0722 * pixels[i + 2];
+
+    sum += brightness;
+    sumSquared += brightness * brightness;
+  }
+
+  const mean = sum / totalPixels;
+
+  const variance =
+    sumSquared / totalPixels - mean * mean;
+
+  const standardDeviation = Math.sqrt(variance);
+
+  console.log('[Thumbnail] Standard deviation:', standardDeviation);
+
+  return standardDeviation < 8;
+};
+
+	const captureFrame = () => {
+	  try {
+		context.drawImage(
+		  video,
+		  0,
+		  0,
+		  canvas.width,
+		  canvas.height
+		);
+
+		lastThumbnail = canvas.toDataURL('image/jpeg', 0.85);
+
+		const badFrame = isBadFrame();
+
+		console.log(
+		  `Thumbnail attempt ${currentAttempt + 1}:`,
+		  video.currentTime,
+		  badFrame ? 'BLACK/WHITE FRAME' : 'GOOD FRAME'
+		);
+
+		if (!badFrame) {
+		  succeed(lastThumbnail);
+		  return;
+		}
+
+		currentAttempt++;
+
+		if (currentAttempt < timestamps.length) {
+		  video.currentTime = timestamps[currentAttempt];
+		  return;
+		}
+
+		succeed(lastThumbnail);
+
+	  } catch (error) {
+		fail(`Could not capture thumbnail: ${file.name}`);
+	  }
+	};
+    // Wait until video dimensions are available.
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+
+      if (
+        !Number.isFinite(duration) ||
+        duration <= 0 ||
+        !video.videoWidth ||
+        !video.videoHeight
+      ) {
+        fail(`Invalid video metadata: ${file.name}`);
+        return;
+      }
+
+      // Create a correctly sized canvas.
+      const scale = Math.min(
+        1,
+        640 / video.videoWidth,
+        640 / video.videoHeight
+      );
+
+      canvas.width = Math.max(
+        1,
+        Math.round(video.videoWidth * scale)
+      );
+
+      canvas.height = Math.max(
+        1,
+        Math.round(video.videoHeight * scale)
+      );
+
+	if (duration > 600) {
+	  // Long videos: start at 1 minute.
+	  timestamps = [60, 90];
+	} else {
+	  // Short videos: start near the beginning.
+	  timestamps = [
+		Math.min(1, duration * 0.5),
+		duration * 0.05,
+		Math.min(60, duration * 0.5),
+	  ];
+	}
+
+	// Remove duplicates and invalid timestamps.
+	timestamps = [...new Set(timestamps)].filter(
+	  (time) => time >= 0 && time < duration
+	);
+
+	timestamps = [...new Set(timestamps)].filter(
+	  (time) => time >= 0 && time < duration
+	);
+
+      // Remove duplicates and invalid timestamps.
+      timestamps = [...new Set(timestamps)].filter(
+        (time) => time >= 0 && time < duration
+      );
+
+      currentAttempt = 0;
+
+      video.currentTime = timestamps[0];
+    };
+
+    video.onseeked = () => {
+      captureFrame();
+    };
+
+    video.onerror = () => {
+      fail(`Could not load video: ${file.name}`);
+    };
+
+    video.src = url;
+    video.load();
+  });
+
 
   /*
    * ---------------------------------------------------------
@@ -406,13 +910,15 @@ const closeViewer = async () => {
     }
 
     // Stop and unload all gallery preview videos.
-    document
-      .querySelectorAll<HTMLVideoElement>('[data-gallery-video]')
-      .forEach((video) => {
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-      });
+    const preview = galleryPreviewRef.current;
+
+	if (preview) {
+	  preview.pause();
+	  preview.removeAttribute('src');
+	  preview.load();
+	}
+
+	hoveredVideoRef.current = null;
 
     // Release all gallery object URLs.
     Object.values(galleryUrls).forEach((url) => {
@@ -452,76 +958,101 @@ const closeViewer = async () => {
    * ---------------------------------------------------------
    */
 
-  const chooseVideoFolder = () => {
-    const input = document.createElement('input');
 
-    input.type = 'file';
-    input.multiple = true;
 
-    input.setAttribute('webkitdirectory', '');
-    input.setAttribute('directory', '');
+const chooseVideoFolder = () => {
+  const input = document.createElement('input');
 
-    input.accept = 'video/*';
+  input.type = 'file';
+  input.multiple = true;
+  input.setAttribute('webkitdirectory', '');
+  input.setAttribute('directory', '');
+  input.accept = 'video/*';
 
-    input.onchange = async () => {
-      if (!input.files) return;
+  input.onchange = async () => {
+    if (!input.files) return;
 
-      const files = Array.from(input.files)
-        .filter((file) => file.type.startsWith('video/'))
-        .sort((a, b) => a.name.localeCompare(b.name));
+    const files = Array.from(input.files)
+      .filter((file) => file.type.startsWith('video/'))
+      .sort((a, b) => a.name.localeCompare(b.name));
 
-      if (files.length === 0) {
-        toast.error('No video files found in the selected folder.');
-        return;
+    if (files.length === 0) {
+      toast.error('No video files found in the selected folder.');
+      return;
+    }
+
+    // Stop shared preview.
+    const preview = galleryPreviewRef.current;
+
+    if (preview) {
+      preview.pause();
+      preview.removeAttribute('src');
+      preview.load();
+    }
+
+    hoveredVideoRef.current = null;
+
+    // Release old gallery URLs.
+    Object.values(galleryUrls).forEach((url) => {
+      URL.revokeObjectURL(url);
+    });
+
+    // Create URLs for all files, without delays.
+    const urls: Record<string, string> = {};
+
+    for (const file of files) {
+      urls[file.name] = URL.createObjectURL(file);
+    }
+
+    setGalleryFiles(files);
+    setGalleryUrls(urls);
+
+    setGalleryDurations({});
+    setGalleryAspectRatios({});
+    setGalleryThumbnails({});
+
+    console.log(`[Gallery] Loaded ${files.length} files.`);
+
+    // Process metadata and thumbnails sequentially.
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+
+      console.log(
+        `[Gallery] Processing ${i + 1}/${files.length}: ${file.name}`
+      );
+
+      try {
+        const metadata = await getVideoMetadata(file);
+
+        setGalleryDurations((previous) => ({
+          ...previous,
+          [file.name]: metadata.duration,
+        }));
+
+        setGalleryAspectRatios((previous) => ({
+          ...previous,
+          [file.name]: metadata.aspectRatio,
+        }));
+
+        const thumbnail = await createVideoThumbnail(file);
+
+        setGalleryThumbnails((previous) => ({
+          ...previous,
+          [file.name]: thumbnail,
+        }));
+
+        console.log('[Gallery] Thumbnail generated:', file.name);
+
+      } catch (error) {
+        console.error('[Gallery] Processing failed:', file.name, error);
       }
+    }
 
-      console.log('Gallery files:', files);
-
-      /*
-       * Release the old gallery URLs.
-       */
-      Object.values(galleryUrls).forEach((url) => {
-        URL.revokeObjectURL(url);
-      });
-
-      /*
-       * Create new URLs.
-       */
-      const urls: Record<string, string> = {};
-
-      for (const file of files) {
-        urls[file.name] = URL.createObjectURL(file);
-      }
-
-      setGalleryFiles(files);
-      setGalleryUrls(urls);
-	  const durationEntries = await Promise.all(files.map(async (file) => [file.name, await getVideoDuration(file),] as const),);
-	  setGalleryDurations(Object.fromEntries(durationEntries));
-
-      /*
-       * Generate thumbnails.
-       */
-      const thumbnails: Record<string, string> = {};
-
-      for (const file of files) {
-        try {
-          thumbnails[file.name] =
-            await createVideoThumbnail(file);
-        } catch (error) {
-          console.error(
-            `Could not create thumbnail for ${file.name}`,
-            error,
-          );
-        }
-      }
-
-      setGalleryThumbnails(thumbnails);
-
-
-    };
-
-    input.click();
+    console.log('[Gallery] All thumbnails processed.');
   };
+
+  input.click();
+};
 
   /*
    * ---------------------------------------------------------
@@ -815,8 +1346,22 @@ const closeViewer = async () => {
       {/* GALLERY */}
 {galleryFiles.length > 0 && (
   <section className="p-4">
+<div id="gallery-preview-host" className="hidden">
+	<video
+	  ref={galleryPreviewRef}
+	  muted
+	  playsInline
+	  preload="none"
+	  className="absolute inset-0 w-full h-full object-cover rounded-t-lg"
+	  style={{
+		display: 'none',
+		pointerEvents: 'none',
+	  }}
+	/>
+</div>
   <div className="mb-4">
   <div className="flex items-center gap-2">
+
     {showGallerySearch && (
       <>
         <input
@@ -863,69 +1408,84 @@ const closeViewer = async () => {
 </div>
 
 
+{visibleGalleryFiles.length > 0 ? (
+  <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
 
-    {visibleGalleryFiles.length > 0 ? (
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-        {visibleGalleryFiles.map((file) => (
-          <button
-            key={file.name}
-            type="button"
-            className="overflow-hidden rounded-lg bg-gray-800
-              text-left hover:bg-gray-700"
-            onClick={() => selectGalleryVideo(file)}
-            onDoubleClick={(event) => {event.preventDefault();event.stopPropagation(); selectGalleryVideo(file, true);}}
-            onMouseEnter={(event) => {
-              const video =
-                event.currentTarget.querySelector('video');
+    {visibleGalleryFiles.map((file) => (
+      <button
+        key={file.name}
+        type="button"
+        className="group overflow-hidden rounded-lg bg-gray-800 text-left hover:bg-gray-700"
+        onClick={() => selectGalleryVideo(file)}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          selectGalleryVideo(file, true);
+        }}
+        onMouseEnter={(event) => {
+          const card = event.currentTarget.querySelector(
+            '.gallery-preview-container'
+          ) as HTMLDivElement;
 
-              if (video) {
-                video.currentTime = 0;
-                video.muted = true;
-                void video.play().catch(() => {
-                  // The browser may block preview playback.
-                });
-              }
-            }}
-            onMouseLeave={(event) => {
-              const video =
-                event.currentTarget.querySelector('video');
+          if (card) {
+            handleGalleryMouseEnter(file, card);
+          }
+        }}
+        onMouseLeave={handleGalleryMouseLeave}
+      >
 
-              if (video) {
-                video.pause();
-                video.currentTime = 0;
-              }
-            }}
-          >
-            {galleryUrls[file.name] ? (
-              <video
-                data-gallery-video
-                src={galleryUrls[file.name]}
-                poster={galleryThumbnails[file.name]}
-                muted
-                playsInline
-                preload="metadata"
-                controls={false}
-                disablePictureInPicture
-                aria-hidden="true"
-                className="aspect-video w-full object-cover"
-              />
-            ) : (
-              <div className="flex aspect-video w-full items-center justify-center bg-gray-900">
-                Loading...
-              </div>
-            )}
+        {/* VIDEO PREVIEW AREA */}
+        
+		<div className="gallery-preview-container relative w-full aspect-video bg-gray-900 overflow-hidden rounded-t-lg">
+		  {/* Thumbnail */}
+		  {galleryThumbnails[file.name] && (
+			<img
+			  src={galleryThumbnails[file.name]}
+			  alt=""
+			  className="gallery-thumbnail absolute inset-0 w-full h-full object-cover "
+			/>
+		  )}
 
-            <div className="truncate p-2 text-sm text-white">
-              {file.name}
-            </div>
-          </button>
-        ))}
-      </div>
-    ) : (
-      <p className="py-10 text-center text-gray-400">
-        No videos match your search.
-      </p>
-    )}
+		  {/* Video preview */}
+		  <video
+			ref={galleryPreviewRef}
+			muted
+			playsInline
+			disablePictureInPicture
+			preload="none"
+			className="absolute inset-0 w-full h-full object-cover rounded-t-lg "
+			style={{
+			  display:
+				hoveredVideoRef.current === file.name
+				  ? 'block'
+				  : 'none',
+			}}
+		  />
+
+		  {/* Loading text */}
+		  {!galleryThumbnails[file.name] && (
+			<div className="absolute inset-0 flex items-center justify-center text-gray-400">
+			  Loading thumbnail...
+			</div>
+		  )}
+		</div>
+
+
+        {/* VIDEO NAME */}
+        <div className="p-3 text-white truncate">
+          {file.name}
+        </div>
+
+      </button>
+    ))}
+
+  </div>
+) : (
+  <p className="py-10 text-center text-gray-400">
+    No videos match your search.
+  </p>
+)}
+
   </section>
 )}
 
