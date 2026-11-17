@@ -82,6 +82,10 @@ class WebGLDebugRenderer extends Renderer {
 
   private yaw = 0;
   private pitch = 0;
+  private targetYaw = 0;
+  private targetPitch = 0;
+  private readonly dragSmoothness = 18;
+  private readonly releaseSmoothness = 10;
   private fov = Math.PI / 2;
   private lastFrameTime = 0;
   private targetFov = Math.PI / 2;
@@ -167,15 +171,15 @@ private handlePlaybackChange = () => {
     this.lastX = event.clientX;
     this.lastY = event.clientY;
 
-    this.yaw += dx * 0.005;
-    this.pitch += dy * 0.005;
+	this.targetYaw += dx * 0.005;
+	this.targetPitch += dy * 0.005;
 
-    const limit = Math.PI / 2 - 0.01;
+	const limit = Math.PI / 2 - 0.01;
 
-    this.pitch = Math.max(
-      -limit,
-      Math.min(limit, this.pitch),
-    );
+	this.targetPitch = Math.max(
+	  -limit,
+	  Math.min(limit, this.targetPitch),
+	);
   };
 
   private handlePointerUp = (event: PointerEvent) => {
@@ -206,6 +210,8 @@ private handleWheel = (event: WheelEvent) => {
     if (event.key.toLowerCase() === 'r') {
       this.yaw = 0;
       this.pitch = 0;
+	  this.targetYaw = 0;
+      this.targetPitch = 0;
       this.fov = Math.PI / 2;
 	  this.targetFov = Math.PI / 2;
     }
@@ -268,6 +274,29 @@ private handleWheel = (event: WheelEvent) => {
 			: Math.min((now - this.lastFrameTime) / 1000, 0.05);
 
 		this.lastFrameTime = now;
+		
+		// Smooth camera rotation with stronger damping on release.
+		const rotationSmoothness = this.dragging
+		  ? this.dragSmoothness
+		  : this.releaseSmoothness;
+
+		const rotationFactor =
+		  1 - Math.exp(-rotationSmoothness * deltaTime);
+
+		this.yaw +=
+		  (this.targetYaw - this.yaw) * rotationFactor;
+
+		this.pitch +=
+		  (this.targetPitch - this.pitch) * rotationFactor;
+
+		// Snap to target when the difference is negligible.
+		if (Math.abs(this.targetYaw - this.yaw) < 0.0001) {
+		  this.yaw = this.targetYaw;
+		}
+
+		if (Math.abs(this.targetPitch - this.pitch) < 0.0001) {
+		  this.pitch = this.targetPitch;
+		}
 
 		// Frame-rate-independent, smooth zoom.
 		const smoothFactor = 1 - Math.exp(-2 * deltaTime);
